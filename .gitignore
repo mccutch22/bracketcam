@@ -1,0 +1,6 @@
+# Generated on the CI runner — never committed
+BracketCam.xcodeproj/
+build/
+Payload/
+*.ipa
+.DS_Store

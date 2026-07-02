@@ -1,0 +1,461 @@
+import AVFoundation
+import UIKit
+
+enum CameraError: LocalizedError {
+    case noCamera
+    case cannotAddIO
+    case noImageData
+
+    var errorDescription: String? {
+        switch self {
+        case .noCamera:     return "No back camera found."
+        case .cannotAddIO:  return "Could not configure the capture session."
+        case .noImageData:  return "The captured photo contained no image data."
+        }
+    }
+}
+
+final class CameraManager: NSObject, ObservableObject {
+
+    enum Status: Equatable {
+        case initializing
+        case denied
+        case failed(String)
+        case ready
+        case capturing(String)
+        case saving
+    }
+
+    // MARK: - Published UI state (main thread only)
+    @Published var status: Status = .initializing
+    @Published var plan: BracketPlan?
+    @Published var histogram: Histogram?
+    @Published var focusLocked = false
+    @Published var selfTimerEnabled = false
+    @Published var countdown: Int?
+    @Published var lastSavedAlbum: String?
+    @Published var errorMessage: String?
+
+    let session = AVCaptureSession()
+
+    // MARK: - Private
+    private let sessionQueue = DispatchQueue(label: "BracketCam.session")
+    private let videoQueue = DispatchQueue(label: "BracketCam.video")
+    private var device: AVCaptureDevice?
+    private let photoOutput = AVCapturePhotoOutput()
+    private let videoOutput = AVCaptureVideoDataOutput()
+    private var limits: DeviceExposureLimits?
+    private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
+    private let analyzer = HistogramAnalyzer()
+    private var isCapturing = false
+
+    private let inflightLock = NSLock()
+    private var inflight: [Int64: CheckedContinuation<Data, Error>] = [:]
+
+    private static let setNameFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH.mm.ss"
+        return f
+    }()
+
+    // MARK: - Lifecycle
+
+    func start() {
+        Task {
+            let granted = await AVCaptureDevice.requestAccess(for: .video)
+            guard granted else {
+                await MainActor.run { self.status = .denied }
+                return
+            }
+            do {
+                try await configureSession()
+                await MainActor.run { self.status = .ready }
+            } catch {
+                await MainActor.run { self.status = .failed(error.localizedDescription) }
+            }
+        }
+    }
+
+    private func configureSession() async throws {
+        try await onSessionQueue { [self] in
+            guard let device = AVCaptureDevice.default(.builtInWideAngleCamera,
+                                                       for: .video,
+                                                       position: .back) else {
+                throw CameraError.noCamera
+            }
+            self.device = device
+
+            session.beginConfiguration()
+            session.sessionPreset = .inputPriority
+
+            let input = try AVCaptureDeviceInput(device: device)
+            guard session.canAddInput(input) else { throw CameraError.cannotAddIO }
+            session.addInput(input)
+
+            guard session.canAddOutput(photoOutput) else { throw CameraError.cannotAddIO }
+            session.addOutput(photoOutput)
+
+            videoOutput.videoSettings = [
+                kCVPixelBufferPixelFormatTypeKey as String:
+                    kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+            ]
+            videoOutput.alwaysDiscardsLateVideoFrames = true
+            videoOutput.setSampleBufferDelegate(analyzer, queue: videoQueue)
+            guard session.canAddOutput(videoOutput) else { throw CameraError.cannotAddIO }
+            session.addOutput(videoOutput)
+
+            session.commitConfiguration()
+
+            // Pick the format with the largest maxExposureDuration; break ties
+            // with the largest photo resolution. Queried at runtime, never hardcoded.
+            func maxPhotoPixels(_ f: AVCaptureDevice.Format) -> Int {
+                f.supportedMaxPhotoDimensions
+                    .map { Int($0.width) * Int($0.height) }
+                    .max() ?? 0
+            }
+            let best = device.formats.max { a, b in
+                if a.maxExposureDuration.seconds != b.maxExposureDuration.seconds {
+                    return a.maxExposureDuration.seconds < b.maxExposureDuration.seconds
+                }
+                return maxPhotoPixels(a) < maxPhotoPixels(b)
+            }
+
+            try device.lockForConfiguration()
+            if let best { device.activeFormat = best }
+            if device.isExposureModeSupported(.continuousAutoExposure) {
+                device.exposureMode = .continuousAutoExposure
+            }
+            if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
+                device.whiteBalanceMode = .continuousAutoWhiteBalance
+            }
+            if device.isFocusModeSupported(.continuousAutoFocus) {
+                device.focusMode = .continuousAutoFocus
+            }
+            device.unlockForConfiguration()
+
+            let format = device.activeFormat
+            self.limits = DeviceExposureLimits(minISO: format.minISO,
+                                               maxISO: format.maxISO,
+                                               minDuration: format.minExposureDuration.seconds,
+                                               maxDuration: format.maxExposureDuration.seconds)
+
+            photoOutput.maxPhotoQualityPrioritization = .balanced
+            if let dims = format.supportedMaxPhotoDimensions
+                .max(by: { Int($0.width) * Int($0.height) < Int($1.width) * Int($1.height) }) {
+                photoOutput.maxPhotoDimensions = dims
+            }
+
+            self.rotationCoordinator = AVCaptureDevice.RotationCoordinator(device: device,
+                                                                           previewLayer: nil)
+
+            session.startRunning()
+        }
+
+        // Push histogram + refreshed plan to the UI as preview frames arrive.
+        analyzer.onUpdate = { [weak self] histogram in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                self.histogram = histogram
+                self.refreshLivePlan()
+            }
+        }
+    }
+
+    // MARK: - Live plan (preview readout)
+
+    /// Recomputes the displayed plan from the current auto-exposure meter.
+    /// The HL frame shown here is an estimate from the live histogram; the
+    /// definitive HL measurement happens at capture time at -2 EV.
+    private func refreshLivePlan() {
+        guard !isCapturing, let device, let limits else { return }
+        let meterProduct = device.exposureDuration.seconds * Double(device.iso)
+        guard meterProduct > 0 else { return }
+
+        let hl: FramePlan
+        if let h = histogram {
+            let v = h.value(atPercentile: Tuning.highlightPercentile)
+            let shift = BracketPlanner.highlightShiftStops(percentileValue: v)
+            hl = BracketPlanner.highlightFrame(measuredProduct: meterProduct,
+                                               shiftStops: shift,
+                                               meterProduct: meterProduct,
+                                               limits: limits)
+        } else {
+            hl = BracketPlanner.frame(label: "HL", ev: nil,
+                                      product: meterProduct / 4,
+                                      limits: limits, isHighlight: true)
+        }
+        plan = BracketPlanner.plan(meterProduct: meterProduct,
+                                   highlightFrame: hl,
+                                   limits: limits)
+    }
+
+    // MARK: - Tap to focus / meter
+
+    /// point is in capture-device coordinates (0...1), from the preview layer.
+    func focusAndMeter(at point: CGPoint) {
+        sessionQueue.async { [self] in
+            guard let device else { return }
+            do {
+                try device.lockForConfiguration()
+                if device.isFocusPointOfInterestSupported {
+                    device.focusPointOfInterest = point
+                }
+                // Single-scan AF: the lens converges once, then holds position.
+                if device.isFocusModeSupported(.autoFocus) {
+                    device.focusMode = .autoFocus
+                }
+                if device.isExposurePointOfInterestSupported {
+                    device.exposurePointOfInterest = point
+                }
+                if device.isExposureModeSupported(.continuousAutoExposure) {
+                    device.exposureMode = .continuousAutoExposure
+                }
+                device.unlockForConfiguration()
+                DispatchQueue.main.async { self.focusLocked = true }
+            } catch { }
+        }
+    }
+
+    func resetFocus() {
+        sessionQueue.async { [self] in
+            guard let device else { return }
+            do {
+                try device.lockForConfiguration()
+                let center = CGPoint(x: 0.5, y: 0.5)
+                if device.isFocusPointOfInterestSupported { device.focusPointOfInterest = center }
+                if device.isExposurePointOfInterestSupported { device.exposurePointOfInterest = center }
+                if device.isFocusModeSupported(.continuousAutoFocus) {
+                    device.focusMode = .continuousAutoFocus
+                }
+                if device.isExposureModeSupported(.continuousAutoExposure) {
+                    device.exposureMode = .continuousAutoExposure
+                }
+                device.unlockForConfiguration()
+                DispatchQueue.main.async { self.focusLocked = false }
+            } catch { }
+        }
+    }
+
+    // MARK: - Capture trigger
+
+    func triggerCapture() {
+        guard status == .ready, !isCapturing else { return }
+        Task { await runCaptureSequence() }
+    }
+
+    // MARK: - The 5-frame sequence
+
+    private func runCaptureSequence() async {
+        guard let device, let limits else { return }
+        isCapturing = true
+        defer { isCapturing = false }
+
+        // Optional 2 s self-timer so a screen tap can't shake the tripod.
+        if selfTimerEnabled {
+            for i in [2, 1] {
+                await MainActor.run { self.countdown = i }
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+            await MainActor.run { self.countdown = nil }
+        }
+
+        await MainActor.run { self.status = .capturing("Metering…") }
+
+        // 1. Read the scene meter (current continuous AE solution).
+        let meterProduct = device.exposureDuration.seconds * Double(device.iso)
+        guard meterProduct > 0 else {
+            await finishWithError("Could not read the exposure meter.")
+            return
+        }
+        let anchored = BracketPlanner.anchoredFrames(meterProduct: meterProduct, limits: limits)
+
+        // 2. Lock focus and white balance so only exposure changes across frames.
+        await onSessionQueueVoid {
+            do {
+                try device.lockForConfiguration()
+                if device.isFocusModeSupported(.locked) { device.focusMode = .locked }
+                if device.isWhiteBalanceModeSupported(.locked) { device.whiteBalanceMode = .locked }
+                device.unlockForConfiguration()
+            } catch { }
+        }
+
+        // 3. Measure the highlight-protected frame at the -2 EV settings.
+        //    If the diffuse-highlight percentile is still pinned at clip, step
+        //    down one stop and re-measure (up to maxHighlightSearchStops).
+        await MainActor.run { self.status = .capturing("Measuring highlights…") }
+        var measureProduct = meterProduct / 4
+        var hlProduct = measureProduct
+        for attempt in 0...Tuning.maxHighlightSearchStops {
+            let mf = BracketPlanner.frame(label: "m", ev: nil,
+                                          product: measureProduct, limits: limits)
+            await setCustomExposure(duration: mf.duration, iso: mf.iso)
+            try? await Task.sleep(nanoseconds: UInt64(Tuning.settleSeconds * 1_000_000_000))
+
+            guard let h = analyzer.latest else {
+                hlProduct = mf.achievedProduct
+                break
+            }
+            let v = h.value(atPercentile: Tuning.highlightPercentile)
+            if v >= Tuning.clipValue - 1, attempt < Tuning.maxHighlightSearchStops {
+                measureProduct /= 2
+                continue
+            }
+            let shift = BracketPlanner.highlightShiftStops(percentileValue: v)
+            hlProduct = mf.achievedProduct * pow(2.0, shift)
+            break
+        }
+        let hlFrame = BracketPlanner.highlightFrame(measuredProduct: hlProduct,
+                                                    shiftStops: 0,   // already applied
+                                                    meterProduct: meterProduct,
+                                                    limits: limits)
+        let capturePlan = BracketPlanner.plan(meterProduct: meterProduct,
+                                              highlightFrame: hlFrame,
+                                              limits: limits)
+        await MainActor.run { self.plan = capturePlan }
+
+        // 4. Fire the five frames, darkest to brightest: HL, -2, 0, +2, +4.
+        var images: [Data] = []
+        for (index, frame) in capturePlan.frames.enumerated() {
+            await MainActor.run {
+                self.status = .capturing("Frame \(index + 1)/5  (\(frame.label))")
+            }
+            await setCustomExposure(duration: frame.duration, iso: frame.iso)
+            try? await Task.sleep(nanoseconds: UInt64(Tuning.settleSeconds * 1_000_000_000))
+            do {
+                images.append(try await capturePhoto())
+            } catch {
+                await restoreAutoExposure()
+                await finishWithError("Capture failed: \(error.localizedDescription)")
+                return
+            }
+        }
+
+        await restoreAutoExposure()
+
+        // 5. Save the set to its own album inside the "RE Brackets" folder.
+        await MainActor.run { self.status = .saving }
+        let setName = "Bracket " + Self.setNameFormatter.string(from: Date())
+        do {
+            try await PhotoLibrarySaver.save(imageDatas: images, setName: setName)
+            await MainActor.run {
+                self.lastSavedAlbum = setName
+                self.status = .ready
+            }
+        } catch {
+            await finishWithError("Save failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func finishWithError(_ message: String) async {
+        await MainActor.run {
+            self.errorMessage = message
+            self.status = .ready
+        }
+    }
+
+    private func restoreAutoExposure() async {
+        await onSessionQueueVoid { [self] in
+            guard let device else { return }
+            do {
+                try device.lockForConfiguration()
+                if device.isExposureModeSupported(.continuousAutoExposure) {
+                    device.exposureMode = .continuousAutoExposure
+                }
+                if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
+                    device.whiteBalanceMode = .continuousAutoWhiteBalance
+                }
+                device.unlockForConfiguration()
+            } catch { }
+        }
+    }
+
+    // MARK: - Exposure + capture primitives
+
+    /// Commits a custom duration/ISO and returns once the device reports the
+    /// settings applied. Values are clamped to the active format's limits.
+    private func setCustomExposure(duration: Double, iso: Float) async {
+        guard let device, let limits else { return }
+        let d = min(max(duration, limits.minDuration), limits.maxDuration)
+        let i = min(max(iso, limits.minISO), limits.maxISO)
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            sessionQueue.async {
+                do {
+                    try device.lockForConfiguration()
+                    device.setExposureModeCustom(
+                        duration: CMTime(seconds: d, preferredTimescale: 1_000_000_000),
+                        iso: i
+                    ) { _ in cont.resume() }
+                    device.unlockForConfiguration()
+                } catch {
+                    cont.resume()
+                }
+            }
+        }
+    }
+
+    private func capturePhoto() async throws -> Data {
+        try await withCheckedThrowingContinuation { cont in
+            sessionQueue.async { [self] in
+                let settings = AVCapturePhotoSettings(
+                    format: [AVVideoCodecKey: AVVideoCodecType.jpeg]
+                )
+                settings.flashMode = .off
+                settings.photoQualityPrioritization = .balanced
+                settings.maxPhotoDimensions = photoOutput.maxPhotoDimensions
+
+                if let coordinator = rotationCoordinator,
+                   let connection = photoOutput.connection(with: .video) {
+                    let angle = coordinator.videoRotationAngleForHorizonLevelCapture
+                    if connection.isVideoRotationAngleSupported(angle) {
+                        connection.videoRotationAngle = angle
+                    }
+                }
+
+                inflightLock.lock()
+                inflight[settings.uniqueID] = cont
+                inflightLock.unlock()
+                photoOutput.capturePhoto(with: settings, delegate: self)
+            }
+        }
+    }
+
+    // MARK: - Queue helpers
+
+    private func onSessionQueue<T>(_ body: @escaping () throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { cont in
+            sessionQueue.async {
+                do { cont.resume(returning: try body()) }
+                catch { cont.resume(throwing: error) }
+            }
+        }
+    }
+
+    private func onSessionQueueVoid(_ body: @escaping () -> Void) async {
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            sessionQueue.async {
+                body()
+                cont.resume()
+            }
+        }
+    }
+}
+
+// MARK: - AVCapturePhotoCaptureDelegate
+
+extension CameraManager: AVCapturePhotoCaptureDelegate {
+    func photoOutput(_ output: AVCapturePhotoOutput,
+                     didFinishProcessingPhoto photo: AVCapturePhoto,
+                     error: Error?) {
+        inflightLock.lock()
+        let cont = inflight.removeValue(forKey: photo.resolvedSettings.uniqueID)
+        inflightLock.unlock()
+
+        if let error {
+            cont?.resume(throwing: error)
+        } else if let data = photo.fileDataRepresentation() {
+            cont?.resume(returning: data)
+        } else {
+            cont?.resume(throwing: CameraError.noImageData)
+        }
+    }
+}

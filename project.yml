@@ -1,0 +1,42 @@
+# XcodeGen spec — the GitHub Actions workflow runs `xcodegen generate` to turn
+# this into BracketCam.xcodeproj, so no Mac/Xcode is needed to author the project.
+name: BracketCam
+options:
+  bundleIdPrefix: com.jeffm
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+targets:
+  BracketCam:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - Sources
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: BracketCam
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIRequiredDeviceCapabilities:
+          - arm64
+        ITSAppUsesNonExemptEncryption: false
+        NSCameraUsageDescription: BracketCam uses the camera to shoot HDR exposure brackets.
+        NSPhotoLibraryUsageDescription: BracketCam saves each bracket set to its own album in your photo library.
+        NSPhotoLibraryAddUsageDescription: BracketCam saves captured brackets to your photo library.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jeffm.bracketcam
+        TARGETED_DEVICE_FAMILY: "1"          # iPhone only
+        SWIFT_VERSION: "5.9"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        # The CI build is unsigned; Sideloadly/AltStore re-sign on install.
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: ""
+        CODE_SIGNING_REQUIRED: "NO"
+        CODE_SIGNING_ALLOWED: "NO"
