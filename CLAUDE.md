@@ -71,9 +71,10 @@ the +4 frame, the orange **VERY DARK** badge shows.
    `restoreContinuousModes` resets both to `.invalid` (= format defaults).
 3. **Zero-shutter-lag fabricates photos from buffered preview frames.**
    `photoOutput.isZeroShutterLagEnabled = false` forces a real exposure with
-   the committed shutter/ISO. Quality prioritization is `.speed` everywhere:
-   no Deep Fusion / multi-frame merging to fight manual settings or stall at
-   1 fps.
+   the committed shutter/ISO — this must STAY off. Quality prioritization is
+   `.quality` (v6 tried `.speed`, which caused severe JPEG banding in bright
+   gradients — visible in the user's AI-merged output). If a quality frame
+   errors/times out, it retries once with `.speed` so the bracket completes.
 
 **Never trust the request — watch the hardware.** The capture status line
 shows `device.exposureDuration`/`device.iso` as accepted by the sensor for

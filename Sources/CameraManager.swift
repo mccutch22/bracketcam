@@ -239,9 +239,11 @@ final class CameraManager: NSObject, ObservableObject {
                                            minDuration: format.minExposureDuration.seconds,
                                            maxDuration: effectiveMaxExposure(format))
 
-        // .speed = plain single-frame exposures: no Deep Fusion / multi-frame
-        // merging to fight the manual settings or stall at slow frame rates.
-        photoOutput.maxPhotoQualityPrioritization = .speed
+        // Full processing: .speed produced visible banding in bright
+        // gradients (simpler tone pipeline). With custom exposure iOS skips
+        // the multi-frame merges anyway, and the capture watchdogs + fast
+        // retry protect against slow processing at 1 fps.
+        photoOutput.maxPhotoQualityPrioritization = .quality
         if let dims = format.supportedMaxPhotoDimensions
             .max(by: { Int($0.width) * Int($0.height) < Int($1.width) * Int($1.height) }) {
             photoOutput.maxPhotoDimensions = dims
@@ -434,9 +436,19 @@ final class CameraManager: NSObject, ObservableObject {
             do {
                 images.append(try await capturePhoto())
             } catch {
-                await restoreContinuousModes()
-                await finishWithError("Capture failed: \(error.localizedDescription)")
-                return
+                // Quality processing can be slow at ~1 fps; retry the frame
+                // once in fast mode so one stubborn frame can't kill the set.
+                await MainActor.run {
+                    self.status = .capturing(
+                        "Frame \(index + 1)/\(total) — retrying (fast mode)")
+                }
+                do {
+                    images.append(try await capturePhoto(prioritization: .speed))
+                } catch {
+                    await restoreContinuousModes()
+                    await finishWithError("Capture failed: \(error.localizedDescription)")
+                    return
+                }
             }
         }
 
@@ -551,14 +563,16 @@ final class CameraManager: NSObject, ObservableObject {
         }
     }
 
-    private func capturePhoto() async throws -> Data {
+    private func capturePhoto(
+        prioritization: AVCapturePhotoOutput.QualityPrioritization = .quality
+    ) async throws -> Data {
         try await withCheckedThrowingContinuation { cont in
             sessionQueue.async { [self] in
                 let settings = AVCapturePhotoSettings(
                     format: [AVVideoCodecKey: AVVideoCodecType.jpeg]
                 )
                 settings.flashMode = .off
-                settings.photoQualityPrioritization = .speed
+                settings.photoQualityPrioritization = prioritization
                 settings.maxPhotoDimensions = photoOutput.maxPhotoDimensions
 
                 if let coordinator = rotationCoordinator,
