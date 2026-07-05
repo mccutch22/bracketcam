@@ -5,13 +5,28 @@ enum CameraError: LocalizedError {
     case noCamera
     case cannotAddIO
     case noImageData
+    case captureTimedOut
 
     var errorDescription: String? {
         switch self {
-        case .noCamera:     return "No back camera found."
-        case .cannotAddIO:  return "Could not configure the capture session."
-        case .noImageData:  return "The captured photo contained no image data."
+        case .noCamera:        return "No back camera found."
+        case .cannotAddIO:     return "Could not configure the capture session."
+        case .noImageData:     return "The captured photo contained no image data."
+        case .captureTimedOut: return "The camera did not deliver the photo in time."
         }
+    }
+}
+
+/// Guards a continuation against being resumed twice when a completion
+/// handler races a watchdog timeout.
+private final class ResumeGuard {
+    private let lock = NSLock()
+    private var resumed = false
+    func tryResume() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if resumed { return false }
+        resumed = true
+        return true
     }
 }
 
@@ -181,7 +196,10 @@ final class CameraManager: NSObject, ObservableObject {
                 .max() ?? (1.0 / 30.0)
         }
         func effectiveMaxExposure(_ f: AVCaptureDevice.Format) -> Double {
-            min(f.maxExposureDuration.seconds, maxFrameDuration(f))
+            // 5% under the frame bound: the sensor needs readout time between
+            // frames, and demanding exposure == frame duration starved the
+            // pipeline (hangs / failed captures in v5).
+            min(f.maxExposureDuration.seconds, maxFrameDuration(f) * 0.95)
         }
         let deviceMaxExposure = device.formats
             .map { effectiveMaxExposure($0) }
@@ -221,7 +239,9 @@ final class CameraManager: NSObject, ObservableObject {
                                            minDuration: format.minExposureDuration.seconds,
                                            maxDuration: effectiveMaxExposure(format))
 
-        photoOutput.maxPhotoQualityPrioritization = .balanced
+        // .speed = plain single-frame exposures: no Deep Fusion / multi-frame
+        // merging to fight the manual settings or stall at slow frame rates.
+        photoOutput.maxPhotoQualityPrioritization = .speed
         if let dims = format.supportedMaxPhotoDimensions
             .max(by: { Int($0.width) * Int($0.height) < Int($1.width) * Int($1.height) }) {
             photoOutput.maxPhotoDimensions = dims
@@ -397,10 +417,20 @@ final class CameraManager: NSObject, ObservableObject {
         let total = capturePlan.frames.count
         for (index, frame) in capturePlan.frames.enumerated() {
             await MainActor.run {
-                self.status = .capturing("Frame \(index + 1)/\(total)  (\(frame.label) EV)")
+                self.status = .capturing("Frame \(index + 1)/\(total)  (\(frame.label) EV)…")
             }
             await setCustomExposure(duration: frame.duration, iso: frame.iso)
             try? await Task.sleep(nanoseconds: UInt64(Tuning.settleSeconds * 1_000_000_000))
+
+            // Show what the sensor ACTUALLY accepted — ground truth on screen,
+            // no EXIF archaeology needed to see if a fix worked.
+            let actualShutter = device.exposureDuration.seconds
+            let actualISO = device.iso
+            await MainActor.run {
+                self.status = .capturing(
+                    "Frame \(index + 1)/\(total)  (\(frame.label) EV) — "
+                    + "\(shutterString(actualShutter)) ISO \(Int(actualISO))")
+            }
             do {
                 images.append(try await capturePhoto())
             } catch {
@@ -481,20 +511,24 @@ final class CameraManager: NSObject, ObservableObject {
         let d = min(max(duration, limits.minDuration), limits.maxDuration)
         let i = min(max(iso, limits.minISO), limits.maxISO)
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            let guardFlag = ResumeGuard()
+            // Watchdog: if the device never confirms the new exposure (seen
+            // when the pipeline is starved), carry on rather than hang.
+            sessionQueue.asyncAfter(deadline: .now() + 6) {
+                if guardFlag.tryResume() { cont.resume() }
+            }
             sessionQueue.async {
                 do {
                     try device.lockForConfiguration()
-                    // An exposure can never outlast one video frame, and iOS
-                    // will NOT stretch frames on its own — merely raising
-                    // activeVideoMaxFrameDuration (v4) still left the stream
-                    // at ~15 fps and every exposure clamped to 1/15 s. So
-                    // FORCE the frame length: pin min == max == the exposure
-                    // we need (clamped to what the format supports). The
-                    // preview crawls during the bracket as a side effect;
-                    // restoreContinuousModes resets both to defaults after.
+                    // An exposure can never outlast one video frame, so pin
+                    // the stream's frame length to the exposure — but with
+                    // ~5% slack for sensor readout. v5 pinned frame duration
+                    // EXACTLY equal to the exposure, which left no readout
+                    // time and stalled the pipeline on the long frames.
+                    // restoreContinuousModes resets both after the bracket.
                     if let range = device.activeFormat.videoSupportedFrameRateRanges
                         .max(by: { $0.maxFrameDuration.seconds < $1.maxFrameDuration.seconds }) {
-                        let needed = CMTime(seconds: max(d, 1.0 / 30.0),
+                        let needed = CMTime(seconds: max(d / 0.95, 1.0 / 30.0),
                                             preferredTimescale: 1_000_000_000)
                         let frameDuration = CMTimeClampToRange(
                             needed,
@@ -506,10 +540,12 @@ final class CameraManager: NSObject, ObservableObject {
                     device.setExposureModeCustom(
                         duration: CMTime(seconds: d, preferredTimescale: 1_000_000_000),
                         iso: i
-                    ) { _ in cont.resume() }
+                    ) { _ in
+                        if guardFlag.tryResume() { cont.resume() }
+                    }
                     device.unlockForConfiguration()
                 } catch {
-                    cont.resume()
+                    if guardFlag.tryResume() { cont.resume() }
                 }
             }
         }
@@ -522,7 +558,7 @@ final class CameraManager: NSObject, ObservableObject {
                     format: [AVVideoCodecKey: AVVideoCodecType.jpeg]
                 )
                 settings.flashMode = .off
-                settings.photoQualityPrioritization = .balanced
+                settings.photoQualityPrioritization = .speed
                 settings.maxPhotoDimensions = photoOutput.maxPhotoDimensions
 
                 if let coordinator = rotationCoordinator,
@@ -533,9 +569,21 @@ final class CameraManager: NSObject, ObservableObject {
                     }
                 }
 
+                let photoID = settings.uniqueID
                 inflightLock.lock()
-                inflight[settings.uniqueID] = cont
+                inflight[photoID] = cont
                 inflightLock.unlock()
+
+                // Watchdog: at ~1 fps a still can legitimately take several
+                // seconds, but if it never arrives, fail the frame instead of
+                // hanging the whole bracket (v5 hung here for minutes).
+                sessionQueue.asyncAfter(deadline: .now() + 20) { [self] in
+                    inflightLock.lock()
+                    let stale = inflight.removeValue(forKey: photoID)
+                    inflightLock.unlock()
+                    stale?.resume(throwing: CameraError.captureTimedOut)
+                }
+
                 photoOutput.capturePhoto(with: settings, delegate: self)
             }
         }

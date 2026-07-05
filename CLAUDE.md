@@ -58,18 +58,28 @@ the +4 frame, the orange **VERY DARK** badge shows.
    shutter ceiling is `min(maxExposureDuration, longest supported frame
    duration)` — compute limits from that.
 2. **iOS will not stretch frames for you.** Merely raising
-   `activeVideoMaxFrameDuration` (permission) still left the stream at ~15 fps
-   and every exposure clamped to 1/15 s regardless of the requested duration.
-   `setCustomExposure` must PIN the frame length:
-   `activeVideoMinFrameDuration = activeVideoMaxFrameDuration = the needed
-   exposure` (clamped to the format's supported range). The preview crawls
-   during the bracket as a side effect (a capture overlay explains this);
+   `activeVideoMaxFrameDuration` (permission, v4) still left the stream at
+   ~15 fps and every exposure clamped to 1/15 s. `setCustomExposure` must PIN
+   the frame length: `activeVideoMinFrameDuration =
+   activeVideoMaxFrameDuration = exposure / 0.95` (clamped to the format's
+   range). The ~5% slack is not optional: pinning frame duration EXACTLY equal
+   to the exposure (v5) left no sensor readout time and starved the pipeline —
+   captures hung for minutes or failed with a generic AVFoundation error on
+   the long frames. The exposure cap is correspondingly
+   `min(maxExposureDuration, maxFrameDuration × 0.95)`. The preview crawls
+   during the bracket (capture overlay explains this);
    `restoreContinuousModes` resets both to `.invalid` (= format defaults).
 3. **Zero-shutter-lag fabricates photos from buffered preview frames.**
    `photoOutput.isZeroShutterLagEnabled = false` forces a real exposure with
-   the committed shutter/ISO for every frame.
+   the committed shutter/ISO. Quality prioritization is `.speed` everywhere:
+   no Deep Fusion / multi-frame merging to fight manual settings or stall at
+   1 fps.
 
-Verify fixes with EXIF (Photos → swipe up), never with what the app *requested*.
+**Never trust the request — watch the hardware.** The capture status line
+shows `device.exposureDuration`/`device.iso` as accepted by the sensor for
+each frame; verify saved files with EXIF (Photos → swipe up). Watchdogs
+guarantee forward progress: 6 s on exposure commit, 20 s per photo — a stuck
+frame errors out and restores the camera instead of hanging the bracket.
 
 ## Format selection (per lens, queried at runtime)
 
