@@ -20,12 +20,14 @@ enum CameraError: LocalizedError {
 enum Lens: String, CaseIterable, Identifiable {
     case ultraWide = "0.5×"
     case wide = "1×"
+    case tele = "Tele"   // 2×/2.5×/3×/5× depending on the phone
 
     var id: String { rawValue }
     var deviceType: AVCaptureDevice.DeviceType {
         switch self {
         case .ultraWide: return .builtInUltraWideCamera
         case .wide:      return .builtInWideAngleCamera
+        case .tele:      return .builtInTelephotoCamera
         }
     }
 }
@@ -159,18 +161,37 @@ final class CameraManager: NSObject, ObservableObject {
     private func configureActiveDevice() throws {
         guard let device else { return }
 
-        // Pick the format with the largest maxExposureDuration; break ties
-        // with the largest photo resolution. Queried at runtime, never hardcoded.
+        // Format selection. The shutter cap is min(1 s, device max), so any
+        // format reaching the cap is exposure-equivalent for our purposes —
+        // among those, pick by photo resolution, then field of view, then
+        // video (preview) resolution. v2 picked purely by maxExposureDuration,
+        // which landed on a tiny cropped video format: pixelated, soft,
+        // narrow preview. Queried at runtime, never hardcoded.
         func maxPhotoPixels(_ f: AVCaptureDevice.Format) -> Int {
             f.supportedMaxPhotoDimensions
                 .map { Int($0.width) * Int($0.height) }
                 .max() ?? 0
         }
-        let best = device.formats.max { a, b in
-            if a.maxExposureDuration.seconds != b.maxExposureDuration.seconds {
-                return a.maxExposureDuration.seconds < b.maxExposureDuration.seconds
+        func videoPixels(_ f: AVCaptureDevice.Format) -> Int {
+            let d = CMVideoFormatDescriptionGetDimensions(f.formatDescription)
+            return Int(d.width) * Int(d.height)
+        }
+        let deviceMaxExposure = device.formats
+            .map { $0.maxExposureDuration.seconds }
+            .max() ?? 0
+        let neededExposure = min(Tuning.exposureCapSeconds, deviceMaxExposure) - 0.001
+        let reachingCap = device.formats.filter {
+            $0.maxExposureDuration.seconds >= neededExposure
+        }
+        let pool = reachingCap.isEmpty ? device.formats : reachingCap
+        let best = pool.max { a, b in
+            if maxPhotoPixels(a) != maxPhotoPixels(b) {
+                return maxPhotoPixels(a) < maxPhotoPixels(b)
             }
-            return maxPhotoPixels(a) < maxPhotoPixels(b)
+            if a.videoFieldOfView != b.videoFieldOfView {
+                return a.videoFieldOfView < b.videoFieldOfView
+            }
+            return videoPixels(a) < videoPixels(b)
         }
 
         try device.lockForConfiguration()

@@ -20,7 +20,10 @@ struct CameraPreviewView: UIViewRepresentable {
     func makeUIView(context: Context) -> PreviewUIView {
         let view = PreviewUIView()
         view.previewLayer.session = session
-        view.previewLayer.videoGravity = .resizeAspectFill
+        // Letterbox (like Apple's Camera app) so the ENTIRE captured frame is
+        // visible — aspect-fill cropped the sides, which made framing a room
+        // impossible and the preview look "zoomed in".
+        view.previewLayer.videoGravity = .resizeAspect
         if let connection = view.previewLayer.connection,
            connection.isVideoRotationAngleSupported(90) {
             connection.videoRotationAngle = 90   // portrait-locked UI

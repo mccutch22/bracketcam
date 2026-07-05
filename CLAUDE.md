@@ -21,8 +21,9 @@ Photos in one album per set.
 ## Lenses & zoom
 
 Physical back lenses are discovered at startup (`Lens` enum): **0.5× ultra
-wide** and **1× wide**. The ultra wide is the default when the phone has one
-(real-estate framing); capsule buttons in the UI switch lenses. Switching
+wide**, **1× wide**, and **Tele** (2×–5× depending on phone). The ultra wide
+is the default when the phone has one (real-estate framing); capsule buttons
+in the UI switch lenses. Switching
 swaps the session input and re-runs the full per-device setup (format
 selection, limits, modes, rotation coordinator) — exposure limits can differ
 per lens, and on many iPhones the ultra wide is fixed-focus (all the
@@ -33,12 +34,20 @@ zoom — a crop that applies to the saved photos — so the UI shows a yellow
 "crop" tag whenever it's active (tap the tag to snap back to 1.0). Zoom resets
 on lens switch.
 
-## Device limits (queried at runtime, never hardcoded)
+## Device limits & format selection (queried at runtime, never hardcoded)
 
-For whichever lens is active, among its formats the one with the **largest
-`maxExposureDuration`** is chosen (ties broken by largest photo resolution).
-From the active format we read `minISO`, `maxISO`, `minExposureDuration`,
-`maxExposureDuration`.
+For whichever lens is active: the shutter cap is `min(1 s, device max)`, so
+every format that reaches the cap is exposure-equivalent. Among those
+(falling back to all formats if none reach it), pick by **largest photo
+resolution → widest `videoFieldOfView` → largest video resolution**. Do NOT
+pick purely by largest `maxExposureDuration`: low-res video formats also have
+long exposures, and choosing one gives a pixelated, cropped, soft preview
+(v2 bug). From the active format we read `minISO`, `maxISO`,
+`minExposureDuration`, `maxExposureDuration`.
+
+The preview layer uses `.resizeAspect` (letterboxed, like Apple's Camera) so
+the entire captured frame is always visible for framing — aspect-fill cropped
+the sides of the ultra wide view (also a v2 bug).
 
 **Exposure cap** = `min(1.0 s, format.maxExposureDuration)` — the longest
 shutter any frame may use (`Tuning.exposureCapSeconds`).
