@@ -18,12 +18,27 @@ Photos in one album per set.
 | `Sources/CameraPreviewView.swift` | Preview layer, tap-to-focus, volume-button shutter |
 | `Sources/PhotoLibrarySaver.swift` | Photos album/folder creation and saving |
 
+## Lenses & zoom
+
+Physical back lenses are discovered at startup (`Lens` enum): **0.5× ultra
+wide** and **1× wide**. The ultra wide is the default when the phone has one
+(real-estate framing); capsule buttons in the UI switch lenses. Switching
+swaps the session input and re-runs the full per-device setup (format
+selection, limits, modes, rotation coordinator) — exposure limits can differ
+per lens, and on many iPhones the ultra wide is fixed-focus (all the
+`isFocusModeSupported` guards handle that).
+
+Pinch-to-zoom sets `videoZoomFactor` (clamped 1–10×). This is **digital**
+zoom — a crop that applies to the saved photos — so the UI shows a yellow
+"crop" tag whenever it's active (tap the tag to snap back to 1.0). Zoom resets
+on lens switch.
+
 ## Device limits (queried at runtime, never hardcoded)
 
-At startup the back wide camera is selected and, among its formats, the one
-with the **largest `maxExposureDuration`** is chosen (ties broken by largest
-photo resolution). From the active format we read `minISO`, `maxISO`,
-`minExposureDuration`, `maxExposureDuration`.
+For whichever lens is active, among its formats the one with the **largest
+`maxExposureDuration`** is chosen (ties broken by largest photo resolution).
+From the active format we read `minISO`, `maxISO`, `minExposureDuration`,
+`maxExposureDuration`.
 
 **Exposure cap** = `min(1.0 s, format.maxExposureDuration)` — the longest
 shutter any frame may use (`Tuning.exposureCapSeconds`).
@@ -118,15 +133,19 @@ histogram; the definitive measurement happens at capture time at −2 EV.
 
 1. Optional 2 s self-timer countdown (toggle in UI); volume buttons also fire
    the shutter on iOS 17.2+ (`AVCaptureEventInteraction`) — both avoid tripod shake.
-2. Read the meter product E from continuous AE.
-3. Lock focus (`.locked`) and white balance (`.locked`) — only exposure
-   changes across the bracket.
-4. Measure the HL frame (above).
-5. For each of the 5 frames: `setExposureModeCustom(duration:iso:)`, wait for
+2. **Wait for AF/AE/AWB convergence** (poll `isAdjusting*`, 2.5 s timeout) —
+   locking mid-AF-hunt produced out-of-focus brackets in v1.
+3. Read the meter product E from continuous AE.
+4. Lock focus (`.locked`) and white balance (`.locked`) — only exposure
+   changes across the bracket. After the bracket (success **or** failure),
+   `restoreContinuousModes()` hands focus/exposure/WB back to continuous —
+   v1 left focus locked forever after the first bracket (bug).
+5. Measure the HL frame (above).
+6. For each of the 5 frames: `setExposureModeCustom(duration:iso:)`, wait for
    the commit callback + `settleSeconds`, capture one JPEG
    (`AVCapturePhotoSettings` with JPEG codec, flash off, max photo dimensions).
-6. Restore continuous auto exposure / auto white balance.
-7. Save all 5 JPEGs in one Photos change request: a new album named
+7. Restore continuous auto exposure / white balance / focus.
+8. Save all 5 JPEGs in one Photos change request: a new album named
    `Bracket yyyy-MM-dd HH.mm.ss` inside the top-level **RE Brackets** folder —
    each 5-shot set is its own album, in capture order (darkest first).
 

@@ -35,7 +35,9 @@ struct ContentView: View {
             CameraPreviewView(
                 session: camera.session,
                 onTap: { camera.focusAndMeter(at: $0) },
-                onHardwareShutter: { camera.triggerCapture() }
+                onHardwareShutter: { camera.triggerCapture() },
+                onPinchBegan: { camera.pinchBegan() },
+                onPinchChanged: { camera.pinchChanged($0) }
             )
             .ignoresSafeArea()
 
@@ -96,6 +98,8 @@ struct ContentView: View {
 
     private var bottomPanel: some View {
         VStack(spacing: 10) {
+            lensRow
+
             if let plan = camera.plan {
                 planStrip(plan)
             }
@@ -147,6 +151,33 @@ struct ContentView: View {
         .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 
+    private var lensRow: some View {
+        HStack(spacing: 10) {
+            ForEach(camera.availableLenses) { lens in
+                Button {
+                    camera.selectLens(lens)
+                } label: {
+                    Text(lens.rawValue)
+                        .font(.footnote.bold())
+                        .foregroundStyle(camera.currentLens == lens ? .yellow : .white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                        .background(Color.white.opacity(camera.currentLens == lens ? 0.25 : 0.08))
+                        .clipShape(Capsule())
+                }
+                .disabled(isBusy)
+            }
+            if camera.zoomFactor > 1.01 {
+                Text(String(format: "%.1f× crop", camera.zoomFactor))
+                    .font(.caption.bold())
+                    .foregroundStyle(.yellow)
+                    .onTapGesture { camera.setZoom(1.0) }
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+    }
+
     private func planStrip(_ plan: BracketPlan) -> some View {
         HStack(spacing: 4) {
             ForEach(plan.frames) { frame in
@@ -190,7 +221,7 @@ struct ContentView: View {
         case .ready:
             return camera.focusLocked
                 ? "Tap shutter to fire 5-frame bracket • HL ★ measured at capture"
-                : "Tap the preview to set focus & metering point"
+                : "Tap to focus • pinch to zoom • tripod essential"
         default: return ""
         }
     }

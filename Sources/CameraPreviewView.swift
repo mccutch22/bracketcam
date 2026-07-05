@@ -9,6 +9,8 @@ struct CameraPreviewView: UIViewRepresentable {
     let session: AVCaptureSession
     let onTap: (CGPoint) -> Void
     let onHardwareShutter: () -> Void
+    let onPinchBegan: () -> Void
+    let onPinchChanged: (CGFloat) -> Void
 
     final class PreviewUIView: UIView {
         override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
@@ -27,6 +29,10 @@ struct CameraPreviewView: UIViewRepresentable {
         let tap = UITapGestureRecognizer(target: context.coordinator,
                                          action: #selector(Coordinator.handleTap(_:)))
         view.addGestureRecognizer(tap)
+
+        let pinch = UIPinchGestureRecognizer(target: context.coordinator,
+                                             action: #selector(Coordinator.handlePinch(_:)))
+        view.addGestureRecognizer(pinch)
 
         if #available(iOS 17.2, *) {
             let interaction = AVCaptureEventInteraction { event in
@@ -55,6 +61,14 @@ struct CameraPreviewView: UIViewRepresentable {
             let devicePoint = view.previewLayer
                 .captureDevicePointConverted(fromLayerPoint: layerPoint)
             parent.onTap(devicePoint)
+        }
+
+        @objc func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+            switch gesture.state {
+            case .began:   parent.onPinchBegan()
+            case .changed: parent.onPinchChanged(gesture.scale)
+            default:       break
+            }
         }
     }
 }

@@ -59,19 +59,20 @@ Actions tab ("Run workflow").
    drivers. Launch it once.
 2. Install **Sideloadly** from https://sideloadly.io (Windows 64-bit).
 
-## 4. (Recommended) app-specific password
+## 4. Apple ID password note
 
-Sideloadly asks for your Apple ID password to sign the app. Rather than your
-real password, create an app-specific one:
-account.apple.com → Sign-In and Security → App-Specific Passwords → generate
-one named "sideloadly" and use that in Sideloadly.
+Sideloadly needs your **real Apple ID password** — app-specific passwords are
+NOT supported (it has to reach Apple's signing service, which rejects them).
+With two-factor auth on, after the password Sideloadly shows a separate box for
+the 6-digit code sent to your trusted device. If you'd rather not use your main
+Apple ID, create a second free Apple ID just for sideloading (optional).
 
 ## 5. Install onto the iPhone
 
 1. Connect the iPhone by USB, unlock it, tap **Trust This Computer**.
 2. Open Sideloadly: your iPhone should appear in the device dropdown.
-3. Drag `BracketCam.ipa` into Sideloadly, enter your Apple ID, click **Start**,
-   and enter the app-specific password when prompted (approve any 2FA prompt).
+3. Drag `BracketCam.ipa` into Sideloadly, enter your Apple ID and real password,
+   click **Start**, and enter the 6-digit 2FA code in the box that appears.
 4. First time only, on the iPhone:
    - **Settings → General → VPN & Device Management** → tap your Apple ID
      under "Developer App" → **Trust**.

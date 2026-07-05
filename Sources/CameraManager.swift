@@ -15,6 +15,21 @@ enum CameraError: LocalizedError {
     }
 }
 
+/// The physical back cameras the user can pick from. Real estate work almost
+/// always wants the ultra wide, so it is the default when the phone has one.
+enum Lens: String, CaseIterable, Identifiable {
+    case ultraWide = "0.5×"
+    case wide = "1×"
+
+    var id: String { rawValue }
+    var deviceType: AVCaptureDevice.DeviceType {
+        switch self {
+        case .ultraWide: return .builtInUltraWideCamera
+        case .wide:      return .builtInWideAngleCamera
+        }
+    }
+}
+
 final class CameraManager: NSObject, ObservableObject {
 
     enum Status: Equatable {
@@ -35,6 +50,9 @@ final class CameraManager: NSObject, ObservableObject {
     @Published var countdown: Int?
     @Published var lastSavedAlbum: String?
     @Published var errorMessage: String?
+    @Published var availableLenses: [Lens] = []
+    @Published var currentLens: Lens = .wide
+    @Published var zoomFactor: CGFloat = 1.0
 
     let session = AVCaptureSession()
 
@@ -42,6 +60,8 @@ final class CameraManager: NSObject, ObservableObject {
     private let sessionQueue = DispatchQueue(label: "BracketCam.session")
     private let videoQueue = DispatchQueue(label: "BracketCam.video")
     private var device: AVCaptureDevice?
+    private var videoInput: AVCaptureDeviceInput?
+    private var pinchStartZoom: CGFloat = 1.0
     private let photoOutput = AVCapturePhotoOutput()
     private let videoOutput = AVCaptureVideoDataOutput()
     private var limits: DeviceExposureLimits?
@@ -78,7 +98,13 @@ final class CameraManager: NSObject, ObservableObject {
 
     private func configureSession() async throws {
         try await onSessionQueue { [self] in
-            guard let device = AVCaptureDevice.default(.builtInWideAngleCamera,
+            // Discover which back lenses this phone has.
+            let lenses = Lens.allCases.filter {
+                AVCaptureDevice.default($0.deviceType, for: .video, position: .back) != nil
+            }
+            // Ultra wide is the real-estate default when available.
+            guard let startLens = lenses.first,
+                  let device = AVCaptureDevice.default(startLens.deviceType,
                                                        for: .video,
                                                        position: .back) else {
                 throw CameraError.noCamera
@@ -91,6 +117,7 @@ final class CameraManager: NSObject, ObservableObject {
             let input = try AVCaptureDeviceInput(device: device)
             guard session.canAddInput(input) else { throw CameraError.cannotAddIO }
             session.addInput(input)
+            self.videoInput = input
 
             guard session.canAddOutput(photoOutput) else { throw CameraError.cannotAddIO }
             session.addOutput(photoOutput)
@@ -106,49 +133,14 @@ final class CameraManager: NSObject, ObservableObject {
 
             session.commitConfiguration()
 
-            // Pick the format with the largest maxExposureDuration; break ties
-            // with the largest photo resolution. Queried at runtime, never hardcoded.
-            func maxPhotoPixels(_ f: AVCaptureDevice.Format) -> Int {
-                f.supportedMaxPhotoDimensions
-                    .map { Int($0.width) * Int($0.height) }
-                    .max() ?? 0
-            }
-            let best = device.formats.max { a, b in
-                if a.maxExposureDuration.seconds != b.maxExposureDuration.seconds {
-                    return a.maxExposureDuration.seconds < b.maxExposureDuration.seconds
-                }
-                return maxPhotoPixels(a) < maxPhotoPixels(b)
-            }
-
-            try device.lockForConfiguration()
-            if let best { device.activeFormat = best }
-            if device.isExposureModeSupported(.continuousAutoExposure) {
-                device.exposureMode = .continuousAutoExposure
-            }
-            if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
-                device.whiteBalanceMode = .continuousAutoWhiteBalance
-            }
-            if device.isFocusModeSupported(.continuousAutoFocus) {
-                device.focusMode = .continuousAutoFocus
-            }
-            device.unlockForConfiguration()
-
-            let format = device.activeFormat
-            self.limits = DeviceExposureLimits(minISO: format.minISO,
-                                               maxISO: format.maxISO,
-                                               minDuration: format.minExposureDuration.seconds,
-                                               maxDuration: format.maxExposureDuration.seconds)
-
-            photoOutput.maxPhotoQualityPrioritization = .balanced
-            if let dims = format.supportedMaxPhotoDimensions
-                .max(by: { Int($0.width) * Int($0.height) < Int($1.width) * Int($1.height) }) {
-                photoOutput.maxPhotoDimensions = dims
-            }
-
-            self.rotationCoordinator = AVCaptureDevice.RotationCoordinator(device: device,
-                                                                           previewLayer: nil)
+            try configureActiveDevice()
 
             session.startRunning()
+
+            DispatchQueue.main.async {
+                self.availableLenses = lenses
+                self.currentLens = startLens
+            }
         }
 
         // Push histogram + refreshed plan to the UI as preview frames arrive.
@@ -160,6 +152,112 @@ final class CameraManager: NSObject, ObservableObject {
             }
         }
     }
+
+    /// Format selection, default modes, limits, and photo-output setup for the
+    /// current `device`. Runs on the session queue; used at startup and after
+    /// every lens switch.
+    private func configureActiveDevice() throws {
+        guard let device else { return }
+
+        // Pick the format with the largest maxExposureDuration; break ties
+        // with the largest photo resolution. Queried at runtime, never hardcoded.
+        func maxPhotoPixels(_ f: AVCaptureDevice.Format) -> Int {
+            f.supportedMaxPhotoDimensions
+                .map { Int($0.width) * Int($0.height) }
+                .max() ?? 0
+        }
+        let best = device.formats.max { a, b in
+            if a.maxExposureDuration.seconds != b.maxExposureDuration.seconds {
+                return a.maxExposureDuration.seconds < b.maxExposureDuration.seconds
+            }
+            return maxPhotoPixels(a) < maxPhotoPixels(b)
+        }
+
+        try device.lockForConfiguration()
+        if let best { device.activeFormat = best }
+        if device.isExposureModeSupported(.continuousAutoExposure) {
+            device.exposureMode = .continuousAutoExposure
+        }
+        if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
+            device.whiteBalanceMode = .continuousAutoWhiteBalance
+        }
+        if device.isFocusModeSupported(.continuousAutoFocus) {
+            device.focusMode = .continuousAutoFocus
+        }
+        device.videoZoomFactor = 1.0
+        device.unlockForConfiguration()
+
+        let format = device.activeFormat
+        self.limits = DeviceExposureLimits(minISO: format.minISO,
+                                           maxISO: format.maxISO,
+                                           minDuration: format.minExposureDuration.seconds,
+                                           maxDuration: format.maxExposureDuration.seconds)
+
+        photoOutput.maxPhotoQualityPrioritization = .balanced
+        if let dims = format.supportedMaxPhotoDimensions
+            .max(by: { Int($0.width) * Int($0.height) < Int($1.width) * Int($1.height) }) {
+            photoOutput.maxPhotoDimensions = dims
+        }
+
+        self.rotationCoordinator = AVCaptureDevice.RotationCoordinator(device: device,
+                                                                       previewLayer: nil)
+
+        DispatchQueue.main.async {
+            self.zoomFactor = 1.0
+            self.focusLocked = false
+        }
+    }
+
+    // MARK: - Lens switching & zoom
+
+    func selectLens(_ lens: Lens) {
+        guard lens != currentLens, !isCapturing else { return }
+        sessionQueue.async { [self] in
+            guard let newDevice = AVCaptureDevice.default(lens.deviceType,
+                                                          for: .video,
+                                                          position: .back) else { return }
+            let oldInput = videoInput
+            var switched = false
+
+            session.beginConfiguration()
+            if let oldInput { session.removeInput(oldInput) }
+            if let input = try? AVCaptureDeviceInput(device: newDevice),
+               session.canAddInput(input) {
+                session.addInput(input)
+                videoInput = input
+                device = newDevice
+                switched = true
+            } else if let oldInput, session.canAddInput(oldInput) {
+                session.addInput(oldInput)   // roll back
+            }
+            session.commitConfiguration()
+
+            if switched {
+                try? configureActiveDevice()
+                DispatchQueue.main.async { self.currentLens = lens }
+            } else {
+                DispatchQueue.main.async { self.errorMessage = "Could not switch lens." }
+            }
+        }
+    }
+
+    /// Digital zoom (a crop — it applies to the saved photos too).
+    func setZoom(_ factor: CGFloat) {
+        sessionQueue.async { [self] in
+            guard let device else { return }
+            let maxZoom = min(device.activeFormat.videoMaxZoomFactor, 10)
+            let clamped = min(max(factor, 1), maxZoom)
+            do {
+                try device.lockForConfiguration()
+                device.videoZoomFactor = clamped
+                device.unlockForConfiguration()
+                DispatchQueue.main.async { self.zoomFactor = clamped }
+            } catch { }
+        }
+    }
+
+    func pinchBegan() { pinchStartZoom = zoomFactor }
+    func pinchChanged(_ scale: CGFloat) { setZoom(pinchStartZoom * scale) }
 
     // MARK: - Live plan (preview readout)
 
@@ -261,6 +359,10 @@ final class CameraManager: NSObject, ObservableObject {
 
         await MainActor.run { self.status = .capturing("Metering…") }
 
+        // 0. Let focus/exposure/WB finish converging before we lock anything —
+        //    locking mid-AF-hunt is how out-of-focus brackets happen.
+        await waitForConvergence()
+
         // 1. Read the scene meter (current continuous AE solution).
         let meterProduct = device.exposureDuration.seconds * Double(device.iso)
         guard meterProduct > 0 else {
@@ -324,13 +426,13 @@ final class CameraManager: NSObject, ObservableObject {
             do {
                 images.append(try await capturePhoto())
             } catch {
-                await restoreAutoExposure()
+                await restoreContinuousModes()
                 await finishWithError("Capture failed: \(error.localizedDescription)")
                 return
             }
         }
 
-        await restoreAutoExposure()
+        await restoreContinuousModes()
 
         // 5. Save the set to its own album inside the "RE Brackets" folder.
         await MainActor.run { self.status = .saving }
@@ -353,7 +455,10 @@ final class CameraManager: NSObject, ObservableObject {
         }
     }
 
-    private func restoreAutoExposure() async {
+    /// After a bracket (or a failed one), hand exposure, white balance AND
+    /// focus back to their continuous modes. Focus was previously left locked
+    /// forever here, which froze it at a stale distance for every later shot.
+    private func restoreContinuousModes() async {
         await onSessionQueueVoid { [self] in
             guard let device else { return }
             do {
@@ -364,8 +469,24 @@ final class CameraManager: NSObject, ObservableObject {
                 if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
                     device.whiteBalanceMode = .continuousAutoWhiteBalance
                 }
+                if device.isFocusModeSupported(.continuousAutoFocus) {
+                    device.focusMode = .continuousAutoFocus
+                }
                 device.unlockForConfiguration()
             } catch { }
+        }
+        await MainActor.run { self.focusLocked = false }
+    }
+
+    /// Polls until AF/AE/AWB have all stopped adjusting (or 2.5 s passes).
+    private func waitForConvergence() async {
+        guard let device else { return }
+        let deadline = Date().addingTimeInterval(2.5)
+        while (device.isAdjustingFocus
+               || device.isAdjustingExposure
+               || device.isAdjustingWhiteBalance),
+              Date() < deadline {
+            try? await Task.sleep(nanoseconds: 50_000_000)
         }
     }
 
