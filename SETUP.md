@@ -94,17 +94,17 @@ Wi-Fi while its companion AltServer runs on the PC; the ipa installs the same wa
 
 ## Using the app
 
-1. Phone on the tripod, frame the shot.
+1. Phone on the tripod, frame the shot (0.5× ultra wide is the default lens).
 2. **Tap the preview** on your subject to set the focus/metering point (AF
    locks after a single scan).
-3. Check the plan strip: 5 tiles show each frame's shutter and ISO. `HL ★` is
-   the highlight-protected frame (live value is an estimate; it's re-measured
-   precisely at capture). Green ISO numbers = base ISO.
-4. Optional: toggle the **timer** icon for a 2-second delay, or use the
+3. Optional: toggle the **timer** icon for a 2-second delay, or use the
    **volume buttons** as the shutter (iOS 17.2+) so you never touch the screen.
-5. Tap the shutter. The app meters, measures highlights, fires 5 JPEGs
-   (darkest → brightest), and saves to Photos → Albums →
+4. Tap the shutter. The app meters, then fires 6 JPEGs from −6 to +4 EV
+   (darkest → brightest) and saves to Photos → Albums →
    **RE Brackets → Bracket <date time>** — one album per set.
+5. During capture the preview freezes and a "keep the phone still" overlay
+   shows — long exposures slow the camera stream to a crawl; this is normal.
+   A dark room can take 20–30 seconds for the full set.
 
 Warnings:
 - **VERY DARK** (orange): even at max ISO and the shutter cap, the +4 frame

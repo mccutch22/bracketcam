@@ -1,196 +1,114 @@
-# BracketCam — 5-Frame HDR Bracket Camera for Real Estate
+# BracketCam — 6-Frame HDR Bracket Camera for Real Estate
 
 Native iOS app (SwiftUI + AVFoundation, iOS 17+, iPhone, physical device only).
-One tap captures a 5-shot exposure bracket on a tripod, optimized for lowest
-noise, for AI-based HDR merge/editing downstream. Output is JPEG, saved to
-Photos in one album per set.
+One tap captures a fixed 6-shot exposure bracket on a tripod, optimized for
+lowest noise, for AI-based HDR merge/editing downstream. Output is JPEG, saved
+to Photos in one album per set.
+
+Built for/with a non-developer user on Windows: compiled by GitHub Actions,
+installed via Sideloadly (see SETUP.md). Tested on an iPhone 12.
 
 ## File map
 
 | File | Responsibility |
 |---|---|
 | `Sources/BracketCamApp.swift` | App entry point |
-| `Sources/ContentView.swift` | UI: preview, plan strip, histogram, warnings, shutter |
+| `Sources/ContentView.swift` | UI: preview, lens buttons, badges, shutter, capture overlay |
 | `Sources/CameraManager.swift` | Session setup, format selection, metering, capture sequence |
-| `Sources/BracketPlanner.swift` | Exposure math: ladder, ISO selection, highlight logic, `Tuning` constants |
-| `Sources/HistogramAnalyzer.swift` | Luma histogram from the video data output |
-| `Sources/HistogramView.swift` | Live histogram rendering |
-| `Sources/CameraPreviewView.swift` | Preview layer, tap-to-focus, volume-button shutter |
+| `Sources/BracketPlanner.swift` | Exposure math: ladder, ISO selection, `Tuning` constants |
+| `Sources/CameraPreviewView.swift` | Preview layer, tap-to-focus, pinch zoom, volume shutter |
 | `Sources/PhotoLibrarySaver.swift` | Photos album/folder creation and saving |
+| `project.yml` | XcodeGen spec — all Info.plist keys live here |
+| `.github/workflows/build-ipa.yml` | CI build producing the unsigned .ipa |
 
-## Lenses & zoom
+## The exposure ladder (fixed, 6 frames)
 
-Physical back lenses are discovered at startup (`Lens` enum): **0.5× ultra
-wide**, **1× wide**, and **Tele** (2×–5× depending on phone). The ultra wide
-is the default when the phone has one (real-estate framing); capsule buttons
-in the UI switch lenses. Switching
-swaps the session input and re-runs the full per-device setup (format
-selection, limits, modes, rotation coordinator) — exposure limits can differ
-per lens, and on many iPhones the ultra wide is fixed-focus (all the
-`isFocusModeSupported` guards handle that).
-
-Pinch-to-zoom sets `videoZoomFactor` (clamped 1–10×). This is **digital**
-zoom — a crop that applies to the saved photos — so the UI shows a yellow
-"crop" tag whenever it's active (tap the tag to snap back to 1.0). Zoom resets
-on lens switch.
-
-## Device limits & format selection (queried at runtime, never hardcoded)
-
-For whichever lens is active: the shutter cap is `min(1 s, device max)`, so
-every format that reaches the cap is exposure-equivalent. Among those
-(falling back to all formats if none reach it), pick by **largest photo
-resolution → widest `videoFieldOfView` → largest video resolution**. Do NOT
-pick purely by largest `maxExposureDuration`: low-res video formats also have
-long exposures, and choosing one gives a pixelated, cropped, soft preview
-(v2 bug). From the active format we read `minISO`, `maxISO`,
-`minExposureDuration`, `maxExposureDuration`.
-
-**Frame-duration bound (critical):** a photo's exposure can never exceed one
-video frame, so a format's real shutter ceiling is
-`min(maxExposureDuration, longest supported frame duration)` — and before
-each custom exposure, `activeVideoMaxFrameDuration` is extended to the
-format's longest supported frame (restored to `.invalid` = defaults after the
-bracket). Without both halves, iOS silently clamps every exposure to the
-streaming frame interval (~1/15 s) while the app believes it got 1 s — v3
-bug, caught on an iPhone 12 via EXIF. Related: highlight metering waits for a
-histogram from a frame *fully exposed after* the exposure change
-(`freshHistogram`), because at 1 s shutter the preview stream crawls and a
-fixed settle-sleep reads a stale frame. The UI shows the active lens's true
-cap ("This lens: max shutter …") so hardware limits are always visible.
-
-The preview layer uses `.resizeAspect` (letterboxed, like Apple's Camera) so
-the entire captured frame is always visible for framing — aspect-fill cropped
-the sides of the ultra wide view (also a v2 bug).
-
-**Exposure cap** = `min(1.0 s, format.maxExposureDuration)` — the longest
-shutter any frame may use (`Tuning.exposureCapSeconds`).
+`Tuning.ladderEVs = [-6, -4, -2, 0, +2, +4]`, all relative to the scene meter,
+captured darkest → brightest. There is no metered highlight-protection frame
+(v1 had one): field experience showed a fixed −6 EV floor protects window
+highlights in any realistic interior, with zero moving parts. The histogram
+pipeline was removed along with it — the app has no video data output at all.
 
 ## Metering
 
 While idle the device runs continuous auto-exposure (tap the preview to set
-the AF/AE point of interest; a single-scan AF then holds the lens position).
-At capture time we read the AE solution and form the **meter product**
-
-```
-E = exposureDuration × ISO      (seconds × ISO, the "0 EV" scene exposure)
-```
-
-All frames are defined as multiples of E. Because a frame's brightness depends
-only on the product `T × ISO`, targets are expressed as products and each frame
-independently picks the lowest-noise T/ISO split (below).
-
-## The exposure ladder (fixed, 5 frames)
-
-Four meter-anchored frames at fixed 2-stop spacing, plus one floating
-highlight-protected frame. Capture order is darkest → brightest:
-
-| Frame | Target product | Notes |
-|---|---|---|
-| HL ★ | measured (see below) | never brighter than the −2 frame |
-| −2 EV | E / 4 | |
-|  0 EV | E | the meter anchor |
-| +2 EV | E × 4 | |
-| +4 EV | E × 16 | shadow/noise frame |
+the AF/AE point; a single-scan AF then holds the lens). At capture, after
+waiting for AF/AE/AWB convergence (`isAdjusting*` polling, 2.5 s timeout), we
+read the AE solution and form the meter product `E = exposureDuration × ISO`.
+Each ladder frame's target exposure product is `E × 2^EV`. Focus and white
+balance are locked for the bracket and restored after (v2 bug: focus stayed
+locked forever).
 
 ## ISO selection (per frame, lowest possible)
 
 For a target product `P`:
 
-1. `T = clamp(P / minISO, minExposureDuration, cap)` — stretch the shutter as
-   long as the cap allows at base ISO first (tripod: no stabilization needed).
-2. `ISO = clamp(P / T, minISO, maxISO)` — raise ISO only for the exposure the
-   shutter alone cannot deliver.
+1. `T = clamp(P / minISO, minExposureDuration, cap)` — stretch the shutter to
+   the cap at base ISO first (tripod assumed, no stabilization needed).
+2. `ISO = clamp(P / T, minISO, maxISO)` — raise ISO only for what the shutter
+   can't deliver.
 
-So in bright scenes the whole bracket runs at base ISO (UI shows a green
-**BASE ISO** badge). In dark scenes only the brighter frames climb the ISO
-range. If even `maxISO` at the cap can't reach a frame's target, the frame is
-flagged underexposed; when that happens to the +4 frame the UI shows the
-**VERY DARK** warning (deep shadows may stay underexposed).
+Cap = `min(1.0 s, format effective max)`. Bright scenes run the whole bracket
+at base ISO (green **BASE ISO** badge). If even maxISO at the cap can't reach
+the +4 frame, the orange **VERY DARK** badge shows.
 
-## Highlight-protection logic (the HL frame)
+## Long exposures — the three traps (hard-won on a real iPhone 12)
 
-Goal: put the **diffuse** highlights (bright windows) just under clipping,
-letting a small fraction of extreme speculars clip — we do not chase zero
-clipping.
+1. **A photo's exposure can never exceed one video frame.** The format's real
+   shutter ceiling is `min(maxExposureDuration, longest supported frame
+   duration)` — compute limits from that.
+2. **iOS will not stretch frames for you.** Merely raising
+   `activeVideoMaxFrameDuration` (permission) still left the stream at ~15 fps
+   and every exposure clamped to 1/15 s regardless of the requested duration.
+   `setCustomExposure` must PIN the frame length:
+   `activeVideoMinFrameDuration = activeVideoMaxFrameDuration = the needed
+   exposure` (clamped to the format's supported range). The preview crawls
+   during the bracket as a side effect (a capture overlay explains this);
+   `restoreContinuousModes` resets both to `.invalid` (= format defaults).
+3. **Zero-shutter-lag fabricates photos from buffered preview frames.**
+   `photoOutput.isZeroShutterLagEnabled = false` forces a real exposure with
+   the committed shutter/ISO for every frame.
 
-At capture time, after locking focus and white balance:
+Verify fixes with EXIF (Photos → swipe up), never with what the app *requested*.
 
-1. Set exposure to the −2 EV frame's settings and wait `settleSeconds` (0.35 s)
-   for the pipeline to settle.
-2. Read the luma histogram of a preview frame and find the value `v` at the
-   **99.5th percentile** (`Tuning.highlightPercentile`).
-3. If `v` is pinned at the clip point (≥ `clipValue − 1`), the histogram can't
-   tell us how far over we are: halve the metering exposure (−1 stop) and
-   re-measure, up to `maxHighlightSearchStops` (4) times.
-4. Otherwise compute the shift that puts `v` at the clip point minus the
-   safety margin:
+## Format selection (per lens, queried at runtime)
 
-   ```
-   shiftStops = displayGamma × log2(clipValue / v) − highlightMarginStops
-   HL product = (measured product) × 2^shiftStops
-   ```
+The shutter cap is `min(1 s, device max)`, so every format reaching the cap is
+exposure-equivalent. Among those (fallback: all formats), pick by **largest
+photo resolution → widest `videoFieldOfView` → largest video resolution**.
+Never pick purely by `maxExposureDuration`: low-res video formats also have
+long exposures, and one of those gave a pixelated, cropped preview (v2 bug).
+The preview layer uses `.resizeAspect` (letterboxed, like Apple's Camera) so
+the full captured frame is always visible.
 
-   The preview histogram is gamma-encoded, so the value ratio is converted to
-   linear stops with `displayGamma` (2.2 approximation).
-5. **CLAMP:** `HL product = min(HL product, E / 4)` — the HL frame is never
-   brighter than the −2 EV frame. In scenes with no real highlights it simply
-   matches −2 EV.
+## Lenses & zoom
 
-Tunable constants (all in `Tuning`, `BracketPlanner.swift`):
-
-| Constant | Default | Meaning |
-|---|---|---|
-| `highlightPercentile` | 0.995 | histogram percentile treated as diffuse highlight |
-| `highlightMarginStops` | 1/3 | safety margin below clip |
-| `clipValue` | 250 | 8-bit value treated as clipping (tone-curve shoulder) |
-| `displayGamma` | 2.2 | gamma-to-linear conversion for stop math |
-| `exposureCapSeconds` | 1.0 | shutter ceiling (min'd with device max) |
-| `settleSeconds` | 0.35 | wait after each exposure change |
-| `maxHighlightSearchStops` | 4 | iterative search depth when clipped |
-
-The plan strip in the UI shows a live HL estimate computed from the current
-histogram; the definitive measurement happens at capture time at −2 EV.
+`Lens` enum: 0.5× ultra wide (default — real estate), 1× wide, Tele.
+Discovered at runtime; capsule buttons switch. Switching swaps the session
+input and re-runs all per-device setup (limits differ per lens; ultra wide is
+fixed-focus on many iPhones — `isFocusModeSupported` guards handle it). The
+gray "This lens: max shutter … • base ISO …" line shows the active lens's true
+hardware limits. Pinch = digital zoom (crop, applies to saved photos), yellow
+"crop" tag warns when active, resets on lens switch.
 
 ## Capture sequence
 
-1. Optional 2 s self-timer countdown (toggle in UI); volume buttons also fire
-   the shutter on iOS 17.2+ (`AVCaptureEventInteraction`) — both avoid tripod shake.
-2. **Wait for AF/AE/AWB convergence** (poll `isAdjusting*`, 2.5 s timeout) —
-   locking mid-AF-hunt produced out-of-focus brackets in v1.
-3. Read the meter product E from continuous AE.
-4. Lock focus (`.locked`) and white balance (`.locked`) — only exposure
-   changes across the bracket. After the bracket (success **or** failure),
-   `restoreContinuousModes()` hands focus/exposure/WB back to continuous —
-   v1 left focus locked forever after the first bracket (bug).
-5. Measure the HL frame (above).
-6. For each of the 5 frames: `setExposureModeCustom(duration:iso:)`, wait for
-   the commit callback + `settleSeconds`, capture one JPEG
-   (`AVCapturePhotoSettings` with JPEG codec, flash off, max photo dimensions).
-7. Restore continuous auto exposure / white balance / focus.
-8. Save all 5 JPEGs in one Photos change request: a new album named
-   `Bracket yyyy-MM-dd HH.mm.ss` inside the top-level **RE Brackets** folder —
-   each 5-shot set is its own album, in capture order (darkest first).
-
-## Build pipeline (no Mac)
-
-The user has a Windows PC only. `project.yml` (XcodeGen) defines the Xcode
-project; `.github/workflows/build-ipa.yml` generates the project and compiles
-an **unsigned** `BracketCam.ipa` on GitHub's macOS runners. The ipa is then
-signed and installed onto the iPhone from Windows with Sideloadly (or
-AltStore) using a free Apple ID — see `SETUP.md`. Privacy strings and all
-Info.plist content live in `project.yml`, not in a checked-in plist.
+1. Optional 2 s self-timer; volume buttons fire the shutter on iOS 17.2+
+   (`AVCaptureEventInteraction`) — both avoid tripod shake.
+2. Wait for AF/AE/AWB convergence, read meter product E.
+3. Lock focus + white balance.
+4. For each of the 6 frames (darkest first): pin frame duration, commit custom
+   exposure (completion + 0.35 s settle), capture one JPEG (flash off, max
+   photo dimensions). A dim overlay covers the frozen preview.
+5. Restore continuous AE/AWB/AF and normal frame rates.
+6. Save all 6 JPEGs in one Photos transaction: album `Bracket yyyy-MM-dd
+   HH.mm.ss` inside the top-level **RE Brackets** folder.
 
 ## Known limitations / notes
 
-- iPhones cap custom (manual) exposure around 1 s; the app reads the real
-  limit at runtime and never exceeds it.
-- Requires **Full** Photos access (album creation isn't possible with
-  add-only or limited access).
-- The UI is portrait-locked, but `RotationCoordinator`'s horizon-level capture
-  angle is applied to each photo, so shooting landscape on the tripod still
-  produces correctly-oriented files.
-- `photoQualityPrioritization` is `.balanced`; with custom exposure the system
-  does not apply multi-frame merges (Deep Fusion etc.), so each JPEG reflects
-  the requested exposure.
-- Volume-button shutter needs iOS 17.2+; on 17.0/17.1 use the on-screen
-  shutter with the 2 s timer.
+- Requires **Full** Photos access (album creation).
+- Portrait-locked UI; `RotationCoordinator`'s horizon-level capture angle
+  still orients landscape shots correctly.
+- A dark-scene bracket takes a while: the +2/+4 frames can each run 1 s
+  exposures plus pipeline settle — tens of seconds total is normal.
+- Free-Apple-ID sideloading expires every 7 days (re-run Sideloadly).

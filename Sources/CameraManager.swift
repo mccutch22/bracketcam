@@ -46,7 +46,6 @@ final class CameraManager: NSObject, ObservableObject {
     // MARK: - Published UI state (main thread only)
     @Published var status: Status = .initializing
     @Published var plan: BracketPlan?
-    @Published var histogram: Histogram?
     @Published var focusLocked = false
     @Published var selfTimerEnabled = false
     @Published var countdown: Int?
@@ -60,15 +59,13 @@ final class CameraManager: NSObject, ObservableObject {
 
     // MARK: - Private
     private let sessionQueue = DispatchQueue(label: "BracketCam.session")
-    private let videoQueue = DispatchQueue(label: "BracketCam.video")
     private var device: AVCaptureDevice?
     private var videoInput: AVCaptureDeviceInput?
     private var pinchStartZoom: CGFloat = 1.0
     private let photoOutput = AVCapturePhotoOutput()
-    private let videoOutput = AVCaptureVideoDataOutput()
     private var limits: DeviceExposureLimits?
     private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
-    private let analyzer = HistogramAnalyzer()
+    private var planTimer: Timer?
     private var isCapturing = false
 
     private let inflightLock = NSLock()
@@ -91,7 +88,15 @@ final class CameraManager: NSObject, ObservableObject {
             }
             do {
                 try await configureSession()
-                await MainActor.run { self.status = .ready }
+                await MainActor.run {
+                    self.status = .ready
+                    // The live plan readout is driven by a simple timer now
+                    // (it only needs the current auto-exposure meter values).
+                    self.planTimer = Timer.scheduledTimer(withTimeInterval: 0.5,
+                                                          repeats: true) { [weak self] _ in
+                        self?.refreshLivePlan()
+                    }
+                }
             } catch {
                 await MainActor.run { self.status = .failed(error.localizedDescription) }
             }
@@ -124,16 +129,15 @@ final class CameraManager: NSObject, ObservableObject {
             guard session.canAddOutput(photoOutput) else { throw CameraError.cannotAddIO }
             session.addOutput(photoOutput)
 
-            videoOutput.videoSettings = [
-                kCVPixelBufferPixelFormatTypeKey as String:
-                    kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
-            ]
-            videoOutput.alwaysDiscardsLateVideoFrames = true
-            videoOutput.setSampleBufferDelegate(analyzer, queue: videoQueue)
-            guard session.canAddOutput(videoOutput) else { throw CameraError.cannotAddIO }
-            session.addOutput(videoOutput)
-
             session.commitConfiguration()
+
+            // Zero-shutter-lag assembles the "photo" from recently buffered
+            // preview frames instead of doing a fresh exposure — poison for
+            // manual bracketing, where each shot must be exposed with the
+            // exact committed shutter/ISO. Force a real exposure per frame.
+            if photoOutput.isZeroShutterLagSupported {
+                photoOutput.isZeroShutterLagEnabled = false
+            }
 
             try configureActiveDevice()
 
@@ -142,15 +146,6 @@ final class CameraManager: NSObject, ObservableObject {
             DispatchQueue.main.async {
                 self.availableLenses = lenses
                 self.currentLens = startLens
-            }
-        }
-
-        // Push histogram + refreshed plan to the UI as preview frames arrive.
-        analyzer.onUpdate = { [weak self] histogram in
-            guard let self else { return }
-            DispatchQueue.main.async {
-                self.histogram = histogram
-                self.refreshLivePlan()
             }
         }
     }
@@ -295,29 +290,11 @@ final class CameraManager: NSObject, ObservableObject {
     // MARK: - Live plan (preview readout)
 
     /// Recomputes the displayed plan from the current auto-exposure meter.
-    /// The HL frame shown here is an estimate from the live histogram; the
-    /// definitive HL measurement happens at capture time at -2 EV.
     private func refreshLivePlan() {
         guard !isCapturing, let device, let limits else { return }
         let meterProduct = device.exposureDuration.seconds * Double(device.iso)
         guard meterProduct > 0 else { return }
-
-        let hl: FramePlan
-        if let h = histogram {
-            let v = h.value(atPercentile: Tuning.highlightPercentile)
-            let shift = BracketPlanner.highlightShiftStops(percentileValue: v)
-            hl = BracketPlanner.highlightFrame(measuredProduct: meterProduct,
-                                               shiftStops: shift,
-                                               meterProduct: meterProduct,
-                                               limits: limits)
-        } else {
-            hl = BracketPlanner.frame(label: "HL", ev: nil,
-                                      product: meterProduct / 4,
-                                      limits: limits, isHighlight: true)
-        }
-        plan = BracketPlanner.plan(meterProduct: meterProduct,
-                                   highlightFrame: hl,
-                                   limits: limits)
+        plan = BracketPlanner.plan(meterProduct: meterProduct, limits: limits)
     }
 
     // MARK: - Tap to focus / meter
@@ -402,7 +379,8 @@ final class CameraManager: NSObject, ObservableObject {
             await finishWithError("Could not read the exposure meter.")
             return
         }
-        let anchored = BracketPlanner.anchoredFrames(meterProduct: meterProduct, limits: limits)
+        let capturePlan = BracketPlanner.plan(meterProduct: meterProduct, limits: limits)
+        await MainActor.run { self.plan = capturePlan }
 
         // 2. Lock focus and white balance so only exposure changes across frames.
         await onSessionQueueVoid {
@@ -414,49 +392,12 @@ final class CameraManager: NSObject, ObservableObject {
             } catch { }
         }
 
-        // 3. Measure the highlight-protected frame at the -2 EV settings.
-        //    If the diffuse-highlight percentile is still pinned at clip, step
-        //    down one stop and re-measure (up to maxHighlightSearchStops).
-        await MainActor.run { self.status = .capturing("Measuring highlights…") }
-        var measureProduct = meterProduct / 4
-        var hlProduct = measureProduct
-        for attempt in 0...Tuning.maxHighlightSearchStops {
-            let mf = BracketPlanner.frame(label: "m", ev: nil,
-                                          product: measureProduct, limits: limits)
-            await setCustomExposure(duration: mf.duration, iso: mf.iso)
-
-            // Wait for a histogram from a frame FULLY exposed under the new
-            // settings — at 1 s shutter the stream crawls, so a fixed sleep
-            // would hand back a stale frame from the old exposure.
-            let committedAt = CFAbsoluteTimeGetCurrent()
-            guard let h = await freshHistogram(after: committedAt,
-                                               exposure: mf.duration) else {
-                hlProduct = mf.achievedProduct
-                break
-            }
-            let v = h.value(atPercentile: Tuning.highlightPercentile)
-            if v >= Tuning.clipValue - 1, attempt < Tuning.maxHighlightSearchStops {
-                measureProduct /= 2
-                continue
-            }
-            let shift = BracketPlanner.highlightShiftStops(percentileValue: v)
-            hlProduct = mf.achievedProduct * pow(2.0, shift)
-            break
-        }
-        let hlFrame = BracketPlanner.highlightFrame(measuredProduct: hlProduct,
-                                                    shiftStops: 0,   // already applied
-                                                    meterProduct: meterProduct,
-                                                    limits: limits)
-        let capturePlan = BracketPlanner.plan(meterProduct: meterProduct,
-                                              highlightFrame: hlFrame,
-                                              limits: limits)
-        await MainActor.run { self.plan = capturePlan }
-
-        // 4. Fire the five frames, darkest to brightest: HL, -2, 0, +2, +4.
+        // 3. Fire the ladder, darkest to brightest: -6 … +4.
         var images: [Data] = []
+        let total = capturePlan.frames.count
         for (index, frame) in capturePlan.frames.enumerated() {
             await MainActor.run {
-                self.status = .capturing("Frame \(index + 1)/5  (\(frame.label))")
+                self.status = .capturing("Frame \(index + 1)/\(total)  (\(frame.label) EV)")
             }
             await setCustomExposure(duration: frame.duration, iso: frame.iso)
             try? await Task.sleep(nanoseconds: UInt64(Tuning.settleSeconds * 1_000_000_000))
@@ -519,21 +460,6 @@ final class CameraManager: NSObject, ObservableObject {
         await MainActor.run { self.focusLocked = false }
     }
 
-    /// Returns a histogram computed from a frame that finished exposing after
-    /// `start` (i.e. under the settings committed at `start`). Times out at
-    /// 3× the exposure + 1 s and falls back to whatever is latest.
-    private func freshHistogram(after start: CFAbsoluteTime,
-                                exposure: Double) async -> Histogram? {
-        let deadline = start + max(3.0, exposure * 3 + 1.0)
-        while CFAbsoluteTimeGetCurrent() < deadline {
-            if analyzer.latestTimestamp > start + exposure + Tuning.settleSeconds {
-                return analyzer.latest
-            }
-            try? await Task.sleep(nanoseconds: 100_000_000)
-        }
-        return analyzer.latest
-    }
-
     /// Polls until AF/AE/AWB have all stopped adjusting (or 2.5 s passes).
     private func waitForConvergence() async {
         guard let device else { return }
@@ -558,15 +484,24 @@ final class CameraManager: NSObject, ObservableObject {
             sessionQueue.async {
                 do {
                     try device.lockForConfiguration()
-                    // Let the video stream slow down as far as this format
-                    // allows. Without this, iOS silently clamps the exposure
-                    // to the streaming frame interval (~1/15 s) no matter
-                    // what duration we request. Restored after the bracket.
-                    if let longestFrame = device.activeFormat
-                        .videoSupportedFrameRateRanges
-                        .map({ $0.maxFrameDuration })
-                        .max(by: { $0.seconds < $1.seconds }) {
-                        device.activeVideoMaxFrameDuration = longestFrame
+                    // An exposure can never outlast one video frame, and iOS
+                    // will NOT stretch frames on its own — merely raising
+                    // activeVideoMaxFrameDuration (v4) still left the stream
+                    // at ~15 fps and every exposure clamped to 1/15 s. So
+                    // FORCE the frame length: pin min == max == the exposure
+                    // we need (clamped to what the format supports). The
+                    // preview crawls during the bracket as a side effect;
+                    // restoreContinuousModes resets both to defaults after.
+                    if let range = device.activeFormat.videoSupportedFrameRateRanges
+                        .max(by: { $0.maxFrameDuration.seconds < $1.maxFrameDuration.seconds }) {
+                        let needed = CMTime(seconds: max(d, 1.0 / 30.0),
+                                            preferredTimescale: 1_000_000_000)
+                        let frameDuration = CMTimeClampToRange(
+                            needed,
+                            range: CMTimeRange(start: range.minFrameDuration,
+                                               end: range.maxFrameDuration))
+                        device.activeVideoMinFrameDuration = frameDuration
+                        device.activeVideoMaxFrameDuration = frameDuration
                     }
                     device.setExposureModeCustom(
                         duration: CMTime(seconds: d, preferredTimescale: 1_000_000_000),

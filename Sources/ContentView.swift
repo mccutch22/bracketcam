@@ -49,6 +49,23 @@ struct ContentView: View {
             .padding(.horizontal, 12)
             .padding(.top, 8)
 
+            if isBusy, camera.countdown == nil {
+                VStack(spacing: 14) {
+                    ProgressView()
+                        .tint(.white)
+                        .scaleEffect(1.6)
+                    Text(busyText)
+                        .font(.title3.bold())
+                        .foregroundStyle(.white)
+                    Text("Keep the phone still — long exposures in progress")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.7))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.black.opacity(0.35))
+                .ignoresSafeArea()
+            }
+
             if let countdown = camera.countdown {
                 Text("\(countdown)")
                     .font(.system(size: 120, weight: .bold, design: .rounded))
@@ -60,9 +77,6 @@ struct ContentView: View {
 
     private var topReadout: some View {
         VStack(spacing: 6) {
-            HistogramView(histogram: camera.histogram)
-                .frame(height: 64)
-
             if let plan = camera.plan {
                 HStack(spacing: 8) {
                     if plan.allAtBaseISO {
@@ -71,10 +85,6 @@ struct ContentView: View {
                     if plan.plusFourUnderexposed {
                         badge("VERY DARK: +4 limited even at max ISO — deep shadows may stay underexposed",
                               color: .orange)
-                    }
-                    if let h = camera.histogram, h.clippedFraction > 0.001 {
-                        badge(String(format: "%.1f%% clipped", h.clippedFraction * 100),
-                              color: .red)
                     }
                     Spacer()
                     if camera.focusLocked {
@@ -99,10 +109,6 @@ struct ContentView: View {
     private var bottomPanel: some View {
         VStack(spacing: 10) {
             lensRow
-
-            if let plan = camera.plan {
-                planStrip(plan)
-            }
 
             HStack {
                 Button {
@@ -184,34 +190,6 @@ struct ContentView: View {
         .padding(.horizontal, 12)
     }
 
-    private func planStrip(_ plan: BracketPlan) -> some View {
-        HStack(spacing: 4) {
-            ForEach(plan.frames) { frame in
-                VStack(spacing: 3) {
-                    Text(frame.isHighlight ? "HL ★" : frame.label)
-                        .font(.caption.bold())
-                        .foregroundStyle(frame.isHighlight ? .yellow : .white)
-                    Text(shutterString(frame.duration))
-                        .font(.system(.footnote, design: .monospaced))
-                        .foregroundStyle(.white)
-                    Text("ISO \(Int(frame.iso))")
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundStyle(frame.iso <= plan.limits.minISO ? .green : .orange)
-                    if frame.isUnderexposed {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
-                .background(Color.white.opacity(frame.isHighlight ? 0.12 : 0.06))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-            }
-        }
-        .padding(.horizontal, 8)
-    }
-
     private var isBusy: Bool {
         switch camera.status {
         case .capturing, .saving: return true
@@ -226,8 +204,16 @@ struct ContentView: View {
         case .saving: return "Saving to Photos…"
         case .ready:
             return camera.focusLocked
-                ? "Tap shutter to fire 5-frame bracket • HL ★ measured at capture"
+                ? "Tap shutter to fire the 6-frame bracket (-6 to +4 EV)"
                 : "Tap to focus • pinch to zoom • tripod essential"
+        default: return ""
+        }
+    }
+
+    private var busyText: String {
+        switch camera.status {
+        case .capturing(let step): return step
+        case .saving: return "Saving to Photos…"
         default: return ""
         }
     }
