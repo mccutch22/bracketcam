@@ -20,6 +20,14 @@ enum Tuning {
     /// always short, so the frames that matter get the good pipeline.
     static let qualityProcessingMaxExposure: Double = 0.1
 
+    /// JPG mode replaces long exposures with mean-stacked bursts: per-frame
+    /// shutter is capped here (a rate the capture pipeline handles happily)
+    /// and the "missing" exposure time becomes extra frames to average.
+    /// √N noise reduction ≈ the long exposure's benefit, with none of the
+    /// slow-stream pipeline failures. RAW mode still uses true long exposures.
+    static let stackFrameMaxExposure: Double = 1.0 / 15.0
+    static let maxStackFrames = 16
+
     /// The fixed exposure ladder, in EV relative to the scene meter, darkest
     /// first. -6 stands in for highlight protection: deep enough that window
     /// highlights survive in any realistic interior.
@@ -43,6 +51,9 @@ struct FramePlan: Identifiable {
     let evFromMeter: Int
     let duration: Double         // seconds
     let iso: Float
+    /// How many identical captures are mean-stacked for this frame (1 = a
+    /// plain single capture).
+    let stackCount: Int
     /// The exposure product (seconds x ISO) this frame was asked to reach.
     let targetProduct: Double
 
@@ -73,29 +84,47 @@ enum BracketPlanner {
     /// Lowest-noise solution for a target exposure product P (seconds x ISO):
     /// stretch the shutter as long as the cap allows first, then raise ISO only
     /// for whatever exposure the shutter alone can't deliver. Tripod assumed.
+    ///
+    /// `stacked` (JPG mode): per-frame shutter is capped at
+    /// stackFrameMaxExposure, and however many capped frames "fit inside" the
+    /// long exposure we would ideally have used become the stack count.
     static func frame(ev: Int,
                       product: Double,
-                      limits: DeviceExposureLimits) -> FramePlan {
+                      limits: DeviceExposureLimits,
+                      stacked: Bool) -> FramePlan {
+        let cap = stacked ? min(limits.cap, Tuning.stackFrameMaxExposure) : limits.cap
         var duration = product / Double(limits.minISO)
-        duration = min(max(duration, limits.minDuration), limits.cap)
+        duration = min(max(duration, limits.minDuration), cap)
         var iso = Float(product / duration)
         iso = min(max(iso, limits.minISO), limits.maxISO)
+
+        var stackCount = 1
+        if stacked, duration > 0 {
+            // The exposure we'd use with no per-frame cap (up to 1 s):
+            let ideal = min(max(product / Double(limits.minISO), duration), limits.cap)
+            stackCount = min(Tuning.maxStackFrames,
+                             max(1, Int((ideal / duration).rounded())))
+        }
+
         let label = ev > 0 ? "+\(ev)" : "\(ev)"
         return FramePlan(label: label,
                          evFromMeter: ev,
                          duration: duration,
                          iso: iso,
+                         stackCount: stackCount,
                          targetProduct: product)
     }
 
     /// The fixed ladder, darkest first. meterProduct is the scene meter's
     /// T x ISO ("0 EV").
     static func plan(meterProduct: Double,
-                     limits: DeviceExposureLimits) -> BracketPlan {
+                     limits: DeviceExposureLimits,
+                     stacked: Bool) -> BracketPlan {
         let frames = Tuning.ladderEVs.map { ev in
             frame(ev: ev,
                   product: meterProduct * pow(2.0, Double(ev)),
-                  limits: limits)
+                  limits: limits,
+                  stacked: stacked)
         }
         return BracketPlan(frames: frames,
                            meterProduct: meterProduct,

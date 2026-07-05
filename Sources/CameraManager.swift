@@ -71,8 +71,9 @@ final class CameraManager: NSObject, ObservableObject {
     @Published var zoomFactor: CGFloat = 1.0
 
     /// RAW (DNG) skips the ISP entirely — no processing banding, 12-bit
-    /// gradients. User converts to JPG in Lightroom/iCloud for the AI editors.
-    @Published var rawEnabled: Bool = UserDefaults.standard.object(forKey: "BracketCam.raw") as? Bool ?? true {
+    /// gradients, true long exposures — at ~25 MB/frame and a Lightroom
+    /// conversion step. Default OFF: stacked JPG mode covers normal work.
+    @Published var rawEnabled: Bool = UserDefaults.standard.object(forKey: "BracketCam.raw") as? Bool ?? false {
         didSet { UserDefaults.standard.set(rawEnabled, forKey: "BracketCam.raw") }
     }
 
@@ -322,7 +323,9 @@ final class CameraManager: NSObject, ObservableObject {
         guard !isCapturing, let device, let limits else { return }
         let meterProduct = device.exposureDuration.seconds * Double(device.iso)
         guard meterProduct > 0 else { return }
-        plan = BracketPlanner.plan(meterProduct: meterProduct, limits: limits)
+        plan = BracketPlanner.plan(meterProduct: meterProduct,
+                                   limits: limits,
+                                   stacked: !rawEnabled)
     }
 
     // MARK: - Tap to focus / meter
@@ -407,7 +410,10 @@ final class CameraManager: NSObject, ObservableObject {
             await finishWithError("Could not read the exposure meter.")
             return
         }
-        let capturePlan = BracketPlanner.plan(meterProduct: meterProduct, limits: limits)
+        let useRaw = rawEnabled
+        let capturePlan = BracketPlanner.plan(meterProduct: meterProduct,
+                                              limits: limits,
+                                              stacked: !useRaw)
         await MainActor.run { self.plan = capturePlan }
 
         // 2. Lock focus and white balance so only exposure changes across frames.
@@ -422,7 +428,6 @@ final class CameraManager: NSObject, ObservableObject {
 
         // 3. Fire the ladder, darkest to brightest: -6 … +4.
         var images: [Data] = []
-        let useRaw = rawEnabled
         let total = capturePlan.frames.count
         for (index, frame) in capturePlan.frames.enumerated() {
             await MainActor.run {
@@ -443,18 +448,40 @@ final class CameraManager: NSObject, ObservableObject {
             let prioritization: AVCapturePhotoOutput.QualityPrioritization =
                 frame.duration <= Tuning.qualityProcessingMaxExposure ? .quality : .speed
 
-            await MainActor.run {
-                self.status = .capturing(
-                    "Frame \(index + 1)/\(total)  (\(frame.label) EV) — "
-                    + "\(shutterString(actualShutter)) ISO \(Int(actualISO))"
-                    + (useRaw ? " • RAW" : (prioritization == .quality ? " • HQ" : " • fast")))
-            }
+            let baseStatus = "Frame \(index + 1)/\(total)  (\(frame.label) EV) — "
+                + "\(shutterString(actualShutter)) ISO \(Int(actualISO))"
+
             do {
-                images.append(try await capturePhoto(raw: useRaw,
-                                                     prioritization: prioritization))
+                if frame.stackCount > 1 {
+                    // Burst of identical exposures, mean-stacked into one
+                    // low-noise JPEG. No exposure change between shots, so
+                    // no settle wait is needed inside the burst.
+                    var burst: [Data] = []
+                    for shot in 0..<frame.stackCount {
+                        await MainActor.run {
+                            self.status = .capturing(
+                                baseStatus + " • stack \(shot + 1)/\(frame.stackCount)")
+                        }
+                        burst.append(try await capturePhoto(raw: false,
+                                                            prioritization: .speed))
+                    }
+                    await MainActor.run {
+                        self.status = .capturing(
+                            "Frame \(index + 1)/\(total) — averaging \(burst.count) shots…")
+                    }
+                    images.append(try FrameStacker.averageJPEGs(burst))
+                } else {
+                    await MainActor.run {
+                        self.status = .capturing(baseStatus
+                            + (useRaw ? " • RAW"
+                               : (prioritization == .quality ? " • HQ" : " • fast")))
+                    }
+                    images.append(try await capturePhoto(raw: useRaw,
+                                                         prioritization: prioritization))
+                }
             } catch {
-                // Quality processing can be slow at ~1 fps; retry the frame
-                // once in fast mode so one stubborn frame can't kill the set.
+                // One fast-mode, single-shot retry so a stubborn frame can't
+                // kill the whole set.
                 await MainActor.run {
                     self.status = .capturing(
                         "Frame \(index + 1)/\(total) — retrying (fast mode)")

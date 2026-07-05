@@ -82,9 +82,32 @@ the +4 frame, the orange **VERY DARK** badge shows.
    that gradient lives in the LONG frames (concentric-ring posterization seen
    in the user's Esoft output). RAW is the real fix (below).
 
-## RAW mode (the actual banding fix)
+## Stacked JPG mode (default) — burst averaging instead of long exposures
 
-`rawEnabled` (UI pill "RAW"/"JPG", persisted, default RAW) captures Bayer DNG
+In JPG mode, per-frame shutter is capped at `Tuning.stackFrameMaxExposure`
+(1/15 s — the rate the pipeline handles natively, no frame-duration pinning
+pain), and any ladder frame that "wanted" a longer exposure instead captures
+`stackCount = ideal long exposure ÷ cap` identical shots (max 16) which
+`FrameStacker` mean-averages into one JPEG. Prior art: classic astro mean
+stacking; Google's HDR+ paper (Hasinoff et al. 2016). Tripod ⇒ no alignment
+pass. Why it works on all three axes:
+
+- **Noise**: √N reduction — 16 frames ≈ the 1 s exposure's benefit.
+- **Banding**: per-frame noise jitters the ISP's posterization contours, so
+  averaging smears the rings; final encode is done by us from float data at
+  JPEG quality 0.95 (Apple never exposes this knob for direct capture).
+- **Reliability**: stream never drops below ~14 fps, so no starvation,
+  timeouts, or watchdog trips.
+
+Trade-off vs RAW long exposure: per-shot ISO is ~stackCount× higher, so
+extremely dark rooms are cleaner in RAW mode; the VERY DARK badge flags when
+the +4 frame can't reach target. Stack shots use `.speed` (speed of capture
+matters; averaging supplies the quality). Memory: ~250 MB transient during a
+16-frame average of 12 MP frames — fine on an iPhone 12.
+
+## RAW mode (toggle) — true long exposures, zero processing
+
+`rawEnabled` (UI pill "RAW"/"JPG", persisted, default JPG/stacked) captures Bayer DNG
 via `AVCapturePhotoSettings(rawPixelFormatType:)` — works on non-Pro iPhone 12.
 RAW skips the ISP entirely, so processing banding cannot exist and gradients
 are 12-bit. An embedded JPEG thumbnail is included for previews. Saved DNGs
