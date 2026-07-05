@@ -34,12 +34,21 @@ final class HistogramAnalyzer: NSObject, AVCaptureVideoDataOutputSampleBufferDel
 
     private let lock = NSLock()
     private var _latest: Histogram?
+    private var _latestTimestamp: CFAbsoluteTime = 0
     private var lastUpdate: CFAbsoluteTime = 0
 
     /// Most recent histogram, safe to read from any thread.
     var latest: Histogram? {
         lock.lock(); defer { lock.unlock() }
         return _latest
+    }
+
+    /// Wall-clock time the most recent histogram arrived. Lets callers wait
+    /// for a frame captured AFTER an exposure change (at 1 s shutter the
+    /// stream crawls, so a fixed sleep can hand back a stale histogram).
+    var latestTimestamp: CFAbsoluteTime {
+        lock.lock(); defer { lock.unlock() }
+        return _latestTimestamp
     }
 
     /// Called on the video queue after each new histogram.
@@ -81,6 +90,7 @@ final class HistogramAnalyzer: NSObject, AVCaptureVideoDataOutputSampleBufferDel
         let histogram = Histogram(bins: bins, total: total)
         lock.lock()
         _latest = histogram
+        _latestTimestamp = now
         lock.unlock()
         onUpdate?(histogram)
     }

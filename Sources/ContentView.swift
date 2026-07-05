@@ -144,7 +144,13 @@ struct ContentView: View {
             Text(statusLine)
                 .font(.caption)
                 .foregroundStyle(.white.opacity(0.8))
-                .padding(.bottom, 6)
+
+            if let plan = camera.plan {
+                Text("This lens: max shutter \(shutterString(plan.limits.cap)) • base ISO \(Int(plan.limits.minISO)) • max ISO \(Int(plan.limits.maxISO))")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.5))
+                    .padding(.bottom, 6)
+            }
         }
         .padding(.vertical, 10)
         .background(Color.black.opacity(0.45))

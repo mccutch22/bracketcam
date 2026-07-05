@@ -45,6 +45,19 @@ long exposures, and choosing one gives a pixelated, cropped, soft preview
 (v2 bug). From the active format we read `minISO`, `maxISO`,
 `minExposureDuration`, `maxExposureDuration`.
 
+**Frame-duration bound (critical):** a photo's exposure can never exceed one
+video frame, so a format's real shutter ceiling is
+`min(maxExposureDuration, longest supported frame duration)` — and before
+each custom exposure, `activeVideoMaxFrameDuration` is extended to the
+format's longest supported frame (restored to `.invalid` = defaults after the
+bracket). Without both halves, iOS silently clamps every exposure to the
+streaming frame interval (~1/15 s) while the app believes it got 1 s — v3
+bug, caught on an iPhone 12 via EXIF. Related: highlight metering waits for a
+histogram from a frame *fully exposed after* the exposure change
+(`freshHistogram`), because at 1 s shutter the preview stream crawls and a
+fixed settle-sleep reads a stale frame. The UI shows the active lens's true
+cap ("This lens: max shutter …") so hardware limits are always visible.
+
 The preview layer uses `.resizeAspect` (letterboxed, like Apple's Camera) so
 the entire captured frame is always visible for framing — aspect-fill cropped
 the sides of the ultra wide view (also a v2 bug).

@@ -176,12 +176,24 @@ final class CameraManager: NSObject, ObservableObject {
             let d = CMVideoFormatDescriptionGetDimensions(f.formatDescription)
             return Int(d.width) * Int(d.height)
         }
+        // A photo's exposure can never exceed one video frame, so the real
+        // shutter ceiling of a format is min(maxExposureDuration, longest
+        // supported frame duration). Ignoring the frame bound silently capped
+        // every exposure at the streaming frame rate (~1/15 s) in v3.
+        func maxFrameDuration(_ f: AVCaptureDevice.Format) -> Double {
+            f.videoSupportedFrameRateRanges
+                .map { $0.maxFrameDuration.seconds }
+                .max() ?? (1.0 / 30.0)
+        }
+        func effectiveMaxExposure(_ f: AVCaptureDevice.Format) -> Double {
+            min(f.maxExposureDuration.seconds, maxFrameDuration(f))
+        }
         let deviceMaxExposure = device.formats
-            .map { $0.maxExposureDuration.seconds }
+            .map { effectiveMaxExposure($0) }
             .max() ?? 0
         let neededExposure = min(Tuning.exposureCapSeconds, deviceMaxExposure) - 0.001
         let reachingCap = device.formats.filter {
-            $0.maxExposureDuration.seconds >= neededExposure
+            effectiveMaxExposure($0) >= neededExposure
         }
         let pool = reachingCap.isEmpty ? device.formats : reachingCap
         let best = pool.max { a, b in
@@ -212,7 +224,7 @@ final class CameraManager: NSObject, ObservableObject {
         self.limits = DeviceExposureLimits(minISO: format.minISO,
                                            maxISO: format.maxISO,
                                            minDuration: format.minExposureDuration.seconds,
-                                           maxDuration: format.maxExposureDuration.seconds)
+                                           maxDuration: effectiveMaxExposure(format))
 
         photoOutput.maxPhotoQualityPrioritization = .balanced
         if let dims = format.supportedMaxPhotoDimensions
@@ -412,9 +424,13 @@ final class CameraManager: NSObject, ObservableObject {
             let mf = BracketPlanner.frame(label: "m", ev: nil,
                                           product: measureProduct, limits: limits)
             await setCustomExposure(duration: mf.duration, iso: mf.iso)
-            try? await Task.sleep(nanoseconds: UInt64(Tuning.settleSeconds * 1_000_000_000))
 
-            guard let h = analyzer.latest else {
+            // Wait for a histogram from a frame FULLY exposed under the new
+            // settings — at 1 s shutter the stream crawls, so a fixed sleep
+            // would hand back a stale frame from the old exposure.
+            let committedAt = CFAbsoluteTimeGetCurrent()
+            guard let h = await freshHistogram(after: committedAt,
+                                               exposure: mf.duration) else {
                 hlProduct = mf.achievedProduct
                 break
             }
@@ -493,10 +509,29 @@ final class CameraManager: NSObject, ObservableObject {
                 if device.isFocusModeSupported(.continuousAutoFocus) {
                     device.focusMode = .continuousAutoFocus
                 }
+                // Give the preview its normal frame rate back (.invalid
+                // resets to the format's defaults).
+                device.activeVideoMaxFrameDuration = .invalid
+                device.activeVideoMinFrameDuration = .invalid
                 device.unlockForConfiguration()
             } catch { }
         }
         await MainActor.run { self.focusLocked = false }
+    }
+
+    /// Returns a histogram computed from a frame that finished exposing after
+    /// `start` (i.e. under the settings committed at `start`). Times out at
+    /// 3× the exposure + 1 s and falls back to whatever is latest.
+    private func freshHistogram(after start: CFAbsoluteTime,
+                                exposure: Double) async -> Histogram? {
+        let deadline = start + max(3.0, exposure * 3 + 1.0)
+        while CFAbsoluteTimeGetCurrent() < deadline {
+            if analyzer.latestTimestamp > start + exposure + Tuning.settleSeconds {
+                return analyzer.latest
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return analyzer.latest
     }
 
     /// Polls until AF/AE/AWB have all stopped adjusting (or 2.5 s passes).
@@ -523,6 +558,16 @@ final class CameraManager: NSObject, ObservableObject {
             sessionQueue.async {
                 do {
                     try device.lockForConfiguration()
+                    // Let the video stream slow down as far as this format
+                    // allows. Without this, iOS silently clamps the exposure
+                    // to the streaming frame interval (~1/15 s) no matter
+                    // what duration we request. Restored after the bracket.
+                    if let longestFrame = device.activeFormat
+                        .videoSupportedFrameRateRanges
+                        .map({ $0.maxFrameDuration })
+                        .max(by: { $0.seconds < $1.seconds }) {
+                        device.activeVideoMaxFrameDuration = longestFrame
+                    }
                     device.setExposureModeCustom(
                         duration: CMTime(seconds: d, preferredTimescale: 1_000_000_000),
                         iso: i
