@@ -13,6 +13,13 @@ enum Tuning {
     /// exposure product by more than this many stops (device limits reached).
     static let underexposureToleranceStops: Double = 0.34
 
+    /// Frames with exposures at or below this use .quality photo processing
+    /// (full tone pipeline — no banding). Above it the stream runs too slowly
+    /// for quality processing (it starves and times out), so those frames use
+    /// .speed. The dark frames carry the window/highlight detail and are
+    /// always short, so the frames that matter get the good pipeline.
+    static let qualityProcessingMaxExposure: Double = 0.1
+
     /// The fixed exposure ladder, in EV relative to the scene meter, darkest
     /// first. -6 stands in for highlight protection: deep enough that window
     /// highlights survive in any realistic interior.

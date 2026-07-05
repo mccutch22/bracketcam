@@ -71,10 +71,15 @@ the +4 frame, the orange **VERY DARK** badge shows.
    `restoreContinuousModes` resets both to `.invalid` (= format defaults).
 3. **Zero-shutter-lag fabricates photos from buffered preview frames.**
    `photoOutput.isZeroShutterLagEnabled = false` forces a real exposure with
-   the committed shutter/ISO — this must STAY off. Quality prioritization is
-   `.quality` (v6 tried `.speed`, which caused severe JPEG banding in bright
-   gradients — visible in the user's AI-merged output). If a quality frame
-   errors/times out, it retries once with `.speed` so the bracket completes.
+   the committed shutter/ISO — this must STAY off.
+4. **Processing prioritization is per-frame (hybrid).** `.speed` everywhere
+   (v6) banded bright gradients — visible in the user's Esoft AI merge.
+   `.quality` everywhere (v7) starved at the pinned ~1 fps stream and timed
+   out, aborting brackets. Hybrid (v8): frames with exposure ≤
+   `Tuning.qualityProcessingMaxExposure` (0.1 s) get `.quality` — that covers
+   the dark frames, which carry all the window/highlight gradient detail —
+   longer frames get `.speed` (their highlights are blown regardless). Any
+   failed frame retries once with `.speed`. Status line shows "HQ"/"fast".
 
 **Never trust the request — watch the hardware.** The capture status line
 shows `device.exposureDuration`/`device.iso` as accepted by the sensor for

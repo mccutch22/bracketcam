@@ -428,13 +428,22 @@ final class CameraManager: NSObject, ObservableObject {
             // no EXIF archaeology needed to see if a fix worked.
             let actualShutter = device.exposureDuration.seconds
             let actualISO = device.iso
+
+            // Hybrid processing: full quality pipeline for short exposures
+            // (the dark frames, which carry the window/highlight gradients),
+            // fast pipeline for long ones (quality starves and times out at
+            // ~1 fps, and those frames' highlights are blown anyway).
+            let prioritization: AVCapturePhotoOutput.QualityPrioritization =
+                frame.duration <= Tuning.qualityProcessingMaxExposure ? .quality : .speed
+
             await MainActor.run {
                 self.status = .capturing(
                     "Frame \(index + 1)/\(total)  (\(frame.label) EV) — "
-                    + "\(shutterString(actualShutter)) ISO \(Int(actualISO))")
+                    + "\(shutterString(actualShutter)) ISO \(Int(actualISO))"
+                    + (prioritization == .quality ? " • HQ" : " • fast"))
             }
             do {
-                images.append(try await capturePhoto())
+                images.append(try await capturePhoto(prioritization: prioritization))
             } catch {
                 // Quality processing can be slow at ~1 fps; retry the frame
                 // once in fast mode so one stubborn frame can't kill the set.
