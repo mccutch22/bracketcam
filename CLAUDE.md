@@ -76,10 +76,24 @@ the +4 frame, the orange **VERY DARK** badge shows.
    (v6) banded bright gradients — visible in the user's Esoft AI merge.
    `.quality` everywhere (v7) starved at the pinned ~1 fps stream and timed
    out, aborting brackets. Hybrid (v8): frames with exposure ≤
-   `Tuning.qualityProcessingMaxExposure` (0.1 s) get `.quality` — that covers
-   the dark frames, which carry all the window/highlight gradient detail —
-   longer frames get `.speed` (their highlights are blown regardless). Any
-   failed frame retries once with `.speed`. Status line shows "HQ"/"fast".
+   `Tuning.qualityProcessingMaxExposure` (0.1 s) get `.quality`, longer frames
+   `.speed`. Any failed frame retries once with `.speed`. Status line shows
+   "HQ"/"fast". NOTE: hybrid does NOT fix banding around ceiling lights —
+   that gradient lives in the LONG frames (concentric-ring posterization seen
+   in the user's Esoft output). RAW is the real fix (below).
+
+## RAW mode (the actual banding fix)
+
+`rawEnabled` (UI pill "RAW"/"JPG", persisted, default RAW) captures Bayer DNG
+via `AVCapturePhotoSettings(rawPixelFormatType:)` — works on non-Pro iPhone 12.
+RAW skips the ISP entirely, so processing banding cannot exist and gradients
+are 12-bit. An embedded JPEG thumbnail is included for previews. Saved DNGs
+get real filenames (`Bracket_..._1of6.dng`). The user converts DNG → JPG in
+Lightroom (best) or via iCloud "Most Compatible" export — their AI editors
+(Esoft, autohdr.com) only accept JPG. Caveats: `videoZoomFactor` does NOT
+crop RAW output (pinch zoom is preview-only in RAW mode); ~25 MB per frame;
+if a lens reports no RAW formats the capture silently falls back to JPEG
+(status suffix shows which).
 
 **Never trust the request — watch the hardware.** The capture status line
 shows `device.exposureDuration`/`device.iso` as accepted by the sensor for

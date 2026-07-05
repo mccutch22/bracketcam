@@ -1,4 +1,5 @@
 import Photos
+import UniformTypeIdentifiers
 
 /// Saves each 5-shot set as its own album ("Bracket yyyy-MM-dd HH.mm.ss")
 /// inside a top-level "RE Brackets" folder, so every set is identifiable.
@@ -20,11 +21,16 @@ enum PhotoLibrarySaver {
         }
     }
 
-    static func save(imageDatas: [Data], setName: String) async throws {
+    static func save(imageDatas: [Data], setName: String, isRaw: Bool) async throws {
         let auth = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
         guard auth == .authorized else { throw SaveError.notAuthorized }
 
         let folder = try await findOrCreateFolder()
+
+        let ext = isRaw ? "dng" : "jpg"
+        let baseName = setName
+            .replacingOccurrences(of: " ", with: "_")
+            .replacingOccurrences(of: ".", with: "-")
 
         try await PHPhotoLibrary.shared().performChanges {
             guard let folderRequest = PHCollectionListChangeRequest(for: folder) else { return }
@@ -33,9 +39,17 @@ enum PhotoLibrarySaver {
                 .creationRequestForAssetCollection(withTitle: setName)
 
             var placeholders: [PHObjectPlaceholder] = []
-            for data in imageDatas {
+            for (index, data) in imageDatas.enumerated() {
                 let assetRequest = PHAssetCreationRequest.forAsset()
-                assetRequest.addResource(with: .photo, data: data, options: nil)
+                let options = PHAssetResourceCreationOptions()
+                // Real filenames (Bracket_..._1of6.dng) so Lightroom and
+                // desktop workflows sort and group sets sensibly.
+                options.originalFilename =
+                    "\(baseName)_\(index + 1)of\(imageDatas.count).\(ext)"
+                if let ut = UTType(filenameExtension: ext) {
+                    options.uniformTypeIdentifier = ut.identifier
+                }
+                assetRequest.addResource(with: .photo, data: data, options: options)
                 if let placeholder = assetRequest.placeholderForCreatedAsset {
                     placeholders.append(placeholder)
                 }

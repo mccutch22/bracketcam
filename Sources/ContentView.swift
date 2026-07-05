@@ -186,6 +186,18 @@ struct ContentView: View {
                     .onTapGesture { camera.setZoom(1.0) }
             }
             Spacer()
+            Button {
+                camera.rawEnabled.toggle()
+            } label: {
+                Text(camera.rawEnabled ? "RAW" : "JPG")
+                    .font(.footnote.bold())
+                    .foregroundStyle(camera.rawEnabled ? .yellow : .white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .background(Color.white.opacity(0.12))
+                    .clipShape(Capsule())
+            }
+            .disabled(isBusy)
         }
         .padding(.horizontal, 12)
     }

@@ -70,6 +70,12 @@ final class CameraManager: NSObject, ObservableObject {
     @Published var currentLens: Lens = .wide
     @Published var zoomFactor: CGFloat = 1.0
 
+    /// RAW (DNG) skips the ISP entirely — no processing banding, 12-bit
+    /// gradients. User converts to JPG in Lightroom/iCloud for the AI editors.
+    @Published var rawEnabled: Bool = UserDefaults.standard.object(forKey: "BracketCam.raw") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(rawEnabled, forKey: "BracketCam.raw") }
+    }
+
     let session = AVCaptureSession()
 
     // MARK: - Private
@@ -416,6 +422,7 @@ final class CameraManager: NSObject, ObservableObject {
 
         // 3. Fire the ladder, darkest to brightest: -6 … +4.
         var images: [Data] = []
+        let useRaw = rawEnabled
         let total = capturePlan.frames.count
         for (index, frame) in capturePlan.frames.enumerated() {
             await MainActor.run {
@@ -440,10 +447,11 @@ final class CameraManager: NSObject, ObservableObject {
                 self.status = .capturing(
                     "Frame \(index + 1)/\(total)  (\(frame.label) EV) — "
                     + "\(shutterString(actualShutter)) ISO \(Int(actualISO))"
-                    + (prioritization == .quality ? " • HQ" : " • fast"))
+                    + (useRaw ? " • RAW" : (prioritization == .quality ? " • HQ" : " • fast")))
             }
             do {
-                images.append(try await capturePhoto(prioritization: prioritization))
+                images.append(try await capturePhoto(raw: useRaw,
+                                                     prioritization: prioritization))
             } catch {
                 // Quality processing can be slow at ~1 fps; retry the frame
                 // once in fast mode so one stubborn frame can't kill the set.
@@ -452,7 +460,8 @@ final class CameraManager: NSObject, ObservableObject {
                         "Frame \(index + 1)/\(total) — retrying (fast mode)")
                 }
                 do {
-                    images.append(try await capturePhoto(prioritization: .speed))
+                    images.append(try await capturePhoto(raw: useRaw,
+                                                         prioritization: .speed))
                 } catch {
                     await restoreContinuousModes()
                     await finishWithError("Capture failed: \(error.localizedDescription)")
@@ -467,7 +476,9 @@ final class CameraManager: NSObject, ObservableObject {
         await MainActor.run { self.status = .saving }
         let setName = "Bracket " + Self.setNameFormatter.string(from: Date())
         do {
-            try await PhotoLibrarySaver.save(imageDatas: images, setName: setName)
+            try await PhotoLibrarySaver.save(imageDatas: images,
+                                             setName: setName,
+                                             isRaw: useRaw)
             await MainActor.run {
                 self.lastSavedAlbum = setName
                 self.status = .ready
@@ -573,16 +584,30 @@ final class CameraManager: NSObject, ObservableObject {
     }
 
     private func capturePhoto(
+        raw: Bool,
         prioritization: AVCapturePhotoOutput.QualityPrioritization = .quality
     ) async throws -> Data {
         try await withCheckedThrowingContinuation { cont in
             sessionQueue.async { [self] in
-                let settings = AVCapturePhotoSettings(
-                    format: [AVVideoCodecKey: AVVideoCodecType.jpeg]
-                )
+                let settings: AVCapturePhotoSettings
+                if raw, let rawType = photoOutput.availableRawPhotoPixelFormatTypes.first {
+                    settings = AVCapturePhotoSettings(rawPixelFormatType: rawType)
+                    // RAW is straight sensor data — the quality pipeline
+                    // doesn't apply, and .speed avoids stalls at slow rates.
+                    settings.photoQualityPrioritization = .speed
+                    // Embedded JPEG thumbnail so Photos/Windows show previews.
+                    if let thumbCodec = settings.availableRawEmbeddedThumbnailPhotoCodecTypes.first {
+                        settings.rawEmbeddedThumbnailPhotoFormat = [AVVideoCodecKey: thumbCodec]
+                    }
+                } else {
+                    // Fallback also covers a lens without RAW support.
+                    settings = AVCapturePhotoSettings(
+                        format: [AVVideoCodecKey: AVVideoCodecType.jpeg]
+                    )
+                    settings.photoQualityPrioritization = prioritization
+                    settings.maxPhotoDimensions = photoOutput.maxPhotoDimensions
+                }
                 settings.flashMode = .off
-                settings.photoQualityPrioritization = prioritization
-                settings.maxPhotoDimensions = photoOutput.maxPhotoDimensions
 
                 if let coordinator = rotationCoordinator,
                    let connection = photoOutput.connection(with: .video) {
