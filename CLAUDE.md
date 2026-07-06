@@ -88,9 +88,20 @@ In JPG mode, per-frame shutter is capped at `Tuning.stackFrameMaxExposure`
 (1/15 s — the rate the pipeline handles natively, no frame-duration pinning
 pain), and any ladder frame that "wanted" a longer exposure instead captures
 `stackCount = ideal long exposure ÷ cap` identical shots (max 16) which
-`FrameStacker` mean-averages into one JPEG. Prior art: classic astro mean
-stacking; Google's HDR+ paper (Hasinoff et al. 2016). Tripod ⇒ no alignment
-pass. Why it works on all three axes:
+`FrameStacker` **aligns then mean-averages** into one JPEG. Prior art: classic
+astro stacking; Google's HDR+ paper (Hasinoff et al. 2016).
+
+**Alignment is mandatory (v11 fix):** plain averaging softened the output —
+even tripod frames drift sub-pixel (structure settling + iPhone OIS
+repositioning between shots), and averaging unregistered frames blurs. Each
+frame is registered to frame 0 by a small translational search (±4 px integer
+scan + half-pixel refine, SAD over a subsampled grid, bilinear resample of the
+winner) before it's added. The search always includes zero shift, so alignment
+can never do worse than unaligned — a deliberately safe default since this
+can't be profiled on the Windows authoring machine. The reference frame is
+accumulated without resampling to stay crisp. This is registered stacking, NOT
+focus stacking (which is a depth-of-field technique — irrelevant here). Why it
+works on all three axes:
 
 - **Noise**: √N reduction — 16 frames ≈ the 1 s exposure's benefit.
 - **Banding**: per-frame noise jitters the ISP's posterization contours, so
@@ -98,12 +109,16 @@ pass. Why it works on all three axes:
   JPEG quality 0.95 (Apple never exposes this knob for direct capture).
 - **Reliability**: stream never drops below ~14 fps, so no starvation,
   timeouts, or watchdog trips.
+- **Sharpness**: alignment (above) preserves it.
 
-Trade-off vs RAW long exposure: per-shot ISO is ~stackCount× higher, so
-extremely dark rooms are cleaner in RAW mode; the VERY DARK badge flags when
-the +4 frame can't reach target. Stack shots use `.speed` (speed of capture
-matters; averaging supplies the quality). Memory: ~250 MB transient during a
-16-frame average of 12 MP frames — fine on an iPhone 12.
+Trade-offs vs RAW long exposure: (1) per-shot ISO is ~stackCount× higher, so
+extremely dark rooms are cleaner in RAW mode (VERY DARK badge flags when the
++4 frame can't reach target). (2) Residual softness, if any, then comes from
+per-frame high-ISO noise reduction smearing detail *before* averaging — RAW
+long exposure at low ISO is the crisp fallback for those scenes. Stack shots
+use `.speed` (capture speed matters; alignment+averaging supply the quality).
+Memory: ~340 MB transient while stacking 12 MP frames — fine on an iPhone 12.
+Compute: the align+resample pass adds a second or two per stacked frame.
 
 ## RAW mode (toggle) — true long exposures, zero processing
 
