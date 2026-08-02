@@ -1,9 +1,20 @@
-# BracketCam — 6-Frame HDR Bracket Camera for Real Estate
+# Photo Dash (née BracketCam) — 6-Frame HDR Bracket Camera for Real Estate
 
 Native iOS app (SwiftUI + AVFoundation, iOS 17+, iPhone, physical device only).
 One tap captures a fixed 6-shot exposure bracket on a tripod, optimized for
 lowest noise, for AI-based HDR merge/editing downstream. Output is JPEG, saved
 to Photos in one album per set.
+
+**Product direction (2026-08):** becoming "Photo Dash" — users shoot stacks,
+select them in the in-app Library, and order processed HDR photos at $1/stack.
+Payment happens later at photodash.com when photos are delivered (deliberately
+NO in-app payment: avoids Apple IAP and its cut). Phase 0 (done): rename,
+Library screen (one 0 EV thumbnail per stack, multi-select, shoot naming),
+orders stored locally, RAW toggle hidden (orders are JPG-only; capture path
+still supports RAW). Next phases: TestFlight via Apple Developer account, then
+backend (auth + uploads → Dropbox via server function), then photodash.com
+delivery/payment. Bundle id is now `com.photodash.app` — installs as a NEW
+app alongside any old BracketCam install.
 
 Built for/with a non-developer user on Windows: compiled by GitHub Actions,
 installed via Sideloadly (see SETUP.md). Tested on an iPhone 12.
@@ -20,6 +31,8 @@ installed via Sideloadly (see SETUP.md). Tested on an iPhone 12.
 | `Sources/OrientationObserver.swift` | Device-orientation → UI counter-rotation angle |
 | `Sources/FrameStacker.swift` | Aligned mean-stacking of burst frames (JPG mode) |
 | `Sources/PhotoLibrarySaver.swift` | Photos album/folder creation and saving |
+| `Sources/LibraryView.swift` | Stack library: 0 EV thumbnails, selection, order sheet |
+| `Sources/OrderStore.swift` | Local JSON persistence of placed orders |
 | `project.yml` | XcodeGen spec — all Info.plist keys live here |
 | `.github/workflows/build-ipa.yml` | CI build producing the unsigned .ipa |
 

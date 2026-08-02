@@ -17,21 +17,21 @@ targets:
     info:
       path: Sources/Info.plist
       properties:
-        CFBundleDisplayName: BracketCam
-        CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "1"
+        CFBundleDisplayName: Photo Dash
+        CFBundleShortVersionString: "2.0"
+        CFBundleVersion: "2"
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         UIRequiredDeviceCapabilities:
           - arm64
         ITSAppUsesNonExemptEncryption: false
-        NSCameraUsageDescription: BracketCam uses the camera to shoot HDR exposure brackets.
-        NSPhotoLibraryUsageDescription: BracketCam saves each bracket set to its own album in your photo library.
-        NSPhotoLibraryAddUsageDescription: BracketCam saves captured brackets to your photo library.
+        NSCameraUsageDescription: Photo Dash uses the camera to shoot HDR exposure brackets.
+        NSPhotoLibraryUsageDescription: Photo Dash saves each bracket set to its own album and shows your stacks in the library for ordering.
+        NSPhotoLibraryAddUsageDescription: Photo Dash saves captured brackets to your photo library.
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.jeffm.bracketcam
+        PRODUCT_BUNDLE_IDENTIFIER: com.photodash.app
         TARGETED_DEVICE_FAMILY: "1"          # iPhone only
         SWIFT_VERSION: "5.9"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"

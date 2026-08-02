@@ -6,6 +6,7 @@ struct ContentView: View {
     // (shutter ends up on the right side, like Apple's Camera app), but text
     // and icons counter-rotate in place so they always read upright.
     @StateObject private var orientation = OrientationObserver()
+    @State private var showLibrary = false
 
     var body: some View {
         ZStack {
@@ -25,10 +26,14 @@ struct ContentView: View {
         }
         .onAppear {
             camera.start()
+            camera.rawEnabled = false   // JPG only for now (orders are JPG)
             UIApplication.shared.isIdleTimerDisabled = true
         }
         .onDisappear {
             UIApplication.shared.isIdleTimerDisabled = false
+        }
+        .fullScreenCover(isPresented: $showLibrary) {
+            LibraryView()
         }
     }
 
@@ -150,14 +155,17 @@ struct ContentView: View {
 
                 Spacer()
 
+                // Library: review stacks and order processing. (Focus reset
+                // lives on the AF/AE SET badge — the old button was redundant.)
                 Button {
-                    camera.resetFocus()
+                    showLibrary = true
                 } label: {
-                    Image(systemName: "viewfinder.circle")
-                        .font(.system(size: 34))
+                    Image(systemName: "photo.stack")
+                        .font(.system(size: 30))
                         .foregroundStyle(.white)
                         .rotationEffect(orientation.angle)
                 }
+                .disabled(isBusy)
             }
             .padding(.horizontal, 24)
 
@@ -207,19 +215,8 @@ struct ContentView: View {
                     .onTapGesture { camera.setZoom(1.0) }
             }
             Spacer()
-            Button {
-                camera.rawEnabled.toggle()
-            } label: {
-                Text(camera.rawEnabled ? "RAW" : "JPG")
-                    .font(.footnote.bold())
-                    .foregroundStyle(camera.rawEnabled ? .yellow : .white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 6)
-                    .background(Color.white.opacity(0.12))
-                    .clipShape(Capsule())
-                    .rotationEffect(orientation.angle)
-            }
-            .disabled(isBusy)
+            // RAW toggle removed for now: processing orders are JPG-only.
+            // The capture path still supports RAW if we bring it back.
         }
         .padding(.horizontal, 12)
         // Rotated capsules are taller than the row — give them room so they
