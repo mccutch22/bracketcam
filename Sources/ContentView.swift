@@ -2,6 +2,10 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var camera = CameraManager()
+    // Users shoot mostly in landscape on the tripod: the layout stays put
+    // (shutter ends up on the right side, like Apple's Camera app), but text
+    // and icons counter-rotate in place so they always read upright.
+    @StateObject private var orientation = OrientationObserver()
 
     var body: some View {
         ZStack {
@@ -50,20 +54,24 @@ struct ContentView: View {
             .padding(.top, 8)
 
             if isBusy, camera.countdown == nil {
-                VStack(spacing: 14) {
-                    ProgressView()
-                        .tint(.white)
-                        .scaleEffect(1.6)
-                    Text(busyText)
-                        .font(.title3.bold())
-                        .foregroundStyle(.white)
-                    Text("Keep the phone still — long exposures in progress")
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.7))
+                ZStack {
+                    Color.black.opacity(0.35).ignoresSafeArea()
+                    VStack(spacing: 14) {
+                        ProgressView()
+                            .tint(.white)
+                            .scaleEffect(1.6)
+                        Text(busyText)
+                            .font(.title3.bold())
+                            .foregroundStyle(.white)
+                            .multilineTextAlignment(.center)
+                        Text("Keep the phone still — long exposures in progress")
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.7))
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: 300)
+                    .rotationEffect(orientation.angle)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.black.opacity(0.35))
-                .ignoresSafeArea()
             }
 
             if let countdown = camera.countdown {
@@ -71,6 +79,7 @@ struct ContentView: View {
                     .font(.system(size: 120, weight: .bold, design: .rounded))
                     .foregroundStyle(.white)
                     .shadow(radius: 8)
+                    .rotationEffect(orientation.angle)
             }
         }
     }
@@ -83,7 +92,10 @@ struct ContentView: View {
                         badge("BASE ISO \(Int(plan.limits.minISO))", color: .green)
                     }
                     if plan.plusFourUnderexposed {
-                        badge("VERY DARK: +4 limited even at max ISO — deep shadows may stay underexposed",
+                        // The full explanation doesn't fit rotated in landscape.
+                        badge(orientation.isLandscape
+                                ? "VERY DARK"
+                                : "VERY DARK: +4 limited even at max ISO — deep shadows may stay underexposed",
                               color: .orange)
                     }
                     Spacer()
@@ -95,12 +107,12 @@ struct ContentView: View {
             }
 
             if let error = camera.errorMessage {
-                badge(error, color: .red)
+                badge(error, color: .red, maxWidth: orientation.isLandscape ? 140 : nil)
                     .onTapGesture { camera.errorMessage = nil }
             }
 
             if let album = camera.lastSavedAlbum {
-                badge("Saved: \(album)", color: .blue)
+                badge(orientation.isLandscape ? "Saved ✓" : "Saved: \(album)", color: .blue)
                     .onTapGesture { camera.lastSavedAlbum = nil }
             }
         }
@@ -117,6 +129,7 @@ struct ContentView: View {
                     Image(systemName: camera.selfTimerEnabled ? "timer.circle.fill" : "timer.circle")
                         .font(.system(size: 34))
                         .foregroundStyle(camera.selfTimerEnabled ? .yellow : .white)
+                        .rotationEffect(orientation.angle)
                 }
 
                 Spacer()
@@ -143,19 +156,25 @@ struct ContentView: View {
                     Image(systemName: "viewfinder.circle")
                         .font(.system(size: 34))
                         .foregroundStyle(.white)
+                        .rotationEffect(orientation.angle)
                 }
             }
             .padding(.horizontal, 24)
 
-            Text(statusLine)
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.8))
+            // These two long lines can't rotate in place without overflowing,
+            // and they're hints/specs rather than shooting info — portrait only.
+            // (Capture progress shows in the rotating center overlay instead.)
+            if !orientation.isLandscape {
+                Text(statusLine)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.8))
 
-            if let plan = camera.plan {
-                Text("This lens: max shutter \(shutterString(plan.limits.cap)) • base ISO \(Int(plan.limits.minISO)) • max ISO \(Int(plan.limits.maxISO))")
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.5))
-                    .padding(.bottom, 6)
+                if let plan = camera.plan {
+                    Text("This lens: max shutter \(shutterString(plan.limits.cap)) • base ISO \(Int(plan.limits.minISO)) • max ISO \(Int(plan.limits.maxISO))")
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.5))
+                        .padding(.bottom, 6)
+                }
             }
         }
         .padding(.vertical, 10)
@@ -176,6 +195,7 @@ struct ContentView: View {
                         .padding(.vertical, 6)
                         .background(Color.white.opacity(camera.currentLens == lens ? 0.25 : 0.08))
                         .clipShape(Capsule())
+                        .rotationEffect(orientation.angle)
                 }
                 .disabled(isBusy)
             }
@@ -183,6 +203,7 @@ struct ContentView: View {
                 Text(String(format: "%.1f× crop", camera.zoomFactor))
                     .font(.caption.bold())
                     .foregroundStyle(.yellow)
+                    .rotationEffect(orientation.angle)
                     .onTapGesture { camera.setZoom(1.0) }
             }
             Spacer()
@@ -196,10 +217,14 @@ struct ContentView: View {
                     .padding(.vertical, 6)
                     .background(Color.white.opacity(0.12))
                     .clipShape(Capsule())
+                    .rotationEffect(orientation.angle)
             }
             .disabled(isBusy)
         }
         .padding(.horizontal, 12)
+        // Rotated capsules are taller than the row — give them room so they
+        // don't collide with the shutter row in landscape.
+        .padding(.vertical, orientation.isLandscape ? 12 : 0)
     }
 
     private var isBusy: Bool {
@@ -230,14 +255,16 @@ struct ContentView: View {
         }
     }
 
-    private func badge(_ text: String, color: Color) -> some View {
+    private func badge(_ text: String, color: Color, maxWidth: CGFloat? = nil) -> some View {
         Text(text)
             .font(.caption2.bold())
             .foregroundStyle(.white)
+            .frame(maxWidth: maxWidth)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(color.opacity(0.75))
             .clipShape(Capsule())
+            .rotationEffect(orientation.angle)
     }
 
     private var permissionScreen: some View {

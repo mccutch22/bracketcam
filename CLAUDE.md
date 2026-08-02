@@ -17,6 +17,8 @@ installed via Sideloadly (see SETUP.md). Tested on an iPhone 12.
 | `Sources/CameraManager.swift` | Session setup, format selection, metering, capture sequence |
 | `Sources/BracketPlanner.swift` | Exposure math: ladder, ISO selection, `Tuning` constants |
 | `Sources/CameraPreviewView.swift` | Preview layer, tap-to-focus, pinch zoom, volume shutter |
+| `Sources/OrientationObserver.swift` | Device-orientation → UI counter-rotation angle |
+| `Sources/FrameStacker.swift` | Aligned mean-stacking of burst frames (JPG mode) |
 | `Sources/PhotoLibrarySaver.swift` | Photos album/folder creation and saving |
 | `project.yml` | XcodeGen spec — all Info.plist keys live here |
 | `.github/workflows/build-ipa.yml` | CI build producing the unsigned .ipa |
@@ -175,8 +177,14 @@ hardware limits. Pinch = digital zoom (crop, applies to saved photos), yellow
 ## Known limitations / notes
 
 - Requires **Full** Photos access (album creation).
-- Portrait-locked UI; `RotationCoordinator`'s horizon-level capture angle
-  still orients landscape shots correctly.
+- Portrait-locked UI, but text/icons counter-rotate in place to stay upright
+  when the phone is held landscape (Apple-Camera-style, animated, both
+  directions; `OrientationObserver`). The layout itself never moves — the
+  shutter column simply ends up on the right in landscape. The two long
+  hint/spec lines under the shutter are portrait-only (they can't rotate in
+  place without overflowing); long badges swap to short landscape variants.
+  `RotationCoordinator`'s horizon-level capture angle still orients landscape
+  shots correctly.
 - A dark-scene bracket takes a while: the +2/+4 frames can each run 1 s
   exposures plus pipeline settle — tens of seconds total is normal.
 - Free-Apple-ID sideloading expires every 7 days (re-run Sideloadly).
