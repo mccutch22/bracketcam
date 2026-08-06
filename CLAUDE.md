@@ -187,6 +187,35 @@ hardware limits. Pinch = digital zoom (crop, applies to saved photos), yellow
 6. Save all 6 JPEGs in one Photos transaction: album `Bracket yyyy-MM-dd
    HH.mm.ss` inside the top-level **RE Brackets** folder.
 
+## Handheld mode (TRIPOD/HAND pill, 2026-08)
+
+User verified Esoft aligns *between* bracket frames on handheld sets, so the
+app only has to keep each frame sharp and low-noise. HAND mode changes two
+things: the per-frame shutter cap drops from 1/15 s to **1/60 s**
+(`Tuning.handheldFrameMaxExposure` — reliably sharp in hand with OIS), and
+stacking switches to a motion-robust HDR+-style path in `FrameStacker`:
+
+1. Reference = **sharpest** frame of the burst (gradient energy on 512 px
+   thumbnails), not frame 0, which can carry shutter-press wobble.
+2. Global coarse-to-fine translation search (±16 px) per frame.
+3. **Per-tile refinement** (~500 px tiles, ±5 px around the global shift):
+   local translations approximate rotation/rolling shutter, and because a
+   rotation is a linearly varying shift field, bilinear interpolation of the
+   per-tile shifts between tile centers reproduces it exactly — the warp
+   uses the smoothly interpolated field, so no seams.
+4. **Robust merge**: tiles whose post-alignment residual exceeds 2.5× the
+   frame's median residual are rejected (weight 0, smoothly feathered) —
+   movers/failed alignment fall back to the reference instead of ghosting.
+   Frames with >60 % rejected tiles are skipped entirely. Accumulation is
+   per-pixel weighted (acc + weight planes); each pixel divides by its own
+   accumulated weight.
+
+Stack budget in hand mode is `handheldMaxStackFrames` (12) to keep a full
+bracket under ~10 s of holding still. Tripod mode's global-only alignment
+path is untouched (verified working). Expect hand mode's deep shadows to be
+noisier than tripod mode — √12 stacking ≈ 1.8 stops back of the ~6 stops a
+1 s exposure buys; fine for daytime interiors, use the tripod for twilight.
+
 ## Known limitations / notes
 
 - Requires **Full** Photos access (album creation).

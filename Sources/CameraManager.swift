@@ -77,6 +77,14 @@ final class CameraManager: NSObject, ObservableObject {
         didSet { UserDefaults.standard.set(rawEnabled, forKey: "BracketCam.raw") }
     }
 
+    /// Handheld mode: per-frame shutter capped at a hand-holdable speed
+    /// (~1/60 s, sharp with OIS) and noise recovered by motion-robust aligned
+    /// stacking instead of long exposures. Tripod mode keeps true long
+    /// exposures — still the lowest-noise option.
+    @Published var handheldEnabled: Bool = UserDefaults.standard.object(forKey: "BracketCam.handheld") as? Bool ?? false {
+        didSet { UserDefaults.standard.set(handheldEnabled, forKey: "BracketCam.handheld") }
+    }
+
     let session = AVCaptureSession()
 
     // MARK: - Private
@@ -325,7 +333,8 @@ final class CameraManager: NSObject, ObservableObject {
         guard meterProduct > 0 else { return }
         plan = BracketPlanner.plan(meterProduct: meterProduct,
                                    limits: limits,
-                                   stacked: !rawEnabled)
+                                   stacked: !rawEnabled,
+                                   handheld: handheldEnabled)
     }
 
     // MARK: - Tap to focus / meter
@@ -411,9 +420,11 @@ final class CameraManager: NSObject, ObservableObject {
             return
         }
         let useRaw = rawEnabled
+        let handheld = handheldEnabled
         let capturePlan = BracketPlanner.plan(meterProduct: meterProduct,
                                               limits: limits,
-                                              stacked: !useRaw)
+                                              stacked: !useRaw,
+                                              handheld: handheld)
         await MainActor.run { self.plan = capturePlan }
 
         // 2. Lock focus and white balance so only exposure changes across frames.
@@ -467,9 +478,9 @@ final class CameraManager: NSObject, ObservableObject {
                     }
                     await MainActor.run {
                         self.status = .capturing(
-                            "Frame \(index + 1)/\(total) — averaging \(burst.count) shots…")
+                            "Frame \(index + 1)/\(total) — aligning & averaging \(burst.count) shots…")
                     }
-                    images.append(try FrameStacker.averageJPEGs(burst))
+                    images.append(try FrameStacker.averageJPEGs(burst, handheld: handheld))
                 } else {
                     await MainActor.run {
                         self.status = .capturing(baseStatus

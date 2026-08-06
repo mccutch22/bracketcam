@@ -69,7 +69,9 @@ struct ContentView: View {
                             .font(.title3.bold())
                             .foregroundStyle(.white)
                             .multilineTextAlignment(.center)
-                        Text("Keep the phone still — long exposures in progress")
+                        Text(camera.handheldEnabled
+                             ? "Hold as steady as you can — shooting bursts"
+                             : "Keep the phone still — long exposures in progress")
                             .font(.caption)
                             .foregroundStyle(.white.opacity(0.7))
                             .multilineTextAlignment(.center)
@@ -217,6 +219,19 @@ struct ContentView: View {
             Spacer()
             // RAW toggle removed for now: processing orders are JPG-only.
             // The capture path still supports RAW if we bring it back.
+            Button {
+                camera.handheldEnabled.toggle()
+            } label: {
+                Text(camera.handheldEnabled ? "HAND" : "TRIPOD")
+                    .font(.footnote.bold())
+                    .foregroundStyle(camera.handheldEnabled ? .yellow : .white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .background(Color.white.opacity(0.12))
+                    .clipShape(Capsule())
+                    .rotationEffect(orientation.angle)
+            }
+            .disabled(isBusy)
         }
         .padding(.horizontal, 12)
         // Rotated capsules are taller than the row — give them room so they
@@ -239,7 +254,9 @@ struct ContentView: View {
         case .ready:
             return camera.focusLocked
                 ? "Tap shutter to fire the 6-frame bracket (-6 to +4 EV)"
-                : "Tap to focus • pinch to zoom • tripod essential"
+                : (camera.handheldEnabled
+                    ? "HAND mode • tap to focus • brace your elbows"
+                    : "Tap to focus • pinch to zoom • tripod essential")
         default: return ""
         }
     }

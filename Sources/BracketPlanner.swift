@@ -28,6 +28,13 @@ enum Tuning {
     static let stackFrameMaxExposure: Double = 1.0 / 15.0
     static let maxStackFrames = 16
 
+    /// Handheld mode: per-frame shutter never slower than this — with OIS,
+    /// 1/60 s is reliably sharp in hand — and stacking is the only noise
+    /// tool. Slightly smaller stack budget than tripod mode keeps a full
+    /// bracket under ~10 s of holding still.
+    static let handheldFrameMaxExposure: Double = 1.0 / 60.0
+    static let handheldMaxStackFrames = 12
+
     /// The fixed exposure ladder, in EV relative to the scene meter, darkest
     /// first. -6 stands in for highlight protection: deep enough that window
     /// highlights survive in any realistic interior.
@@ -91,10 +98,14 @@ enum BracketPlanner {
     static func frame(ev: Int,
                       product: Double,
                       limits: DeviceExposureLimits,
-                      stacked: Bool) -> FramePlan {
-        let cap = stacked ? min(limits.cap, Tuning.stackFrameMaxExposure) : limits.cap
+                      stacked: Bool,
+                      handheld: Bool = false) -> FramePlan {
+        let perFrameCap = stacked
+            ? min(limits.cap, handheld ? Tuning.handheldFrameMaxExposure
+                                       : Tuning.stackFrameMaxExposure)
+            : limits.cap
         var duration = product / Double(limits.minISO)
-        duration = min(max(duration, limits.minDuration), cap)
+        duration = min(max(duration, limits.minDuration), perFrameCap)
         var iso = Float(product / duration)
         iso = min(max(iso, limits.minISO), limits.maxISO)
 
@@ -102,7 +113,8 @@ enum BracketPlanner {
         if stacked, duration > 0 {
             // The exposure we'd use with no per-frame cap (up to 1 s):
             let ideal = min(max(product / Double(limits.minISO), duration), limits.cap)
-            stackCount = min(Tuning.maxStackFrames,
+            let maxStack = handheld ? Tuning.handheldMaxStackFrames : Tuning.maxStackFrames
+            stackCount = min(maxStack,
                              max(1, Int((ideal / duration).rounded())))
         }
 
@@ -119,12 +131,14 @@ enum BracketPlanner {
     /// T x ISO ("0 EV").
     static func plan(meterProduct: Double,
                      limits: DeviceExposureLimits,
-                     stacked: Bool) -> BracketPlan {
+                     stacked: Bool,
+                     handheld: Bool = false) -> BracketPlan {
         let frames = Tuning.ladderEVs.map { ev in
             frame(ev: ev,
                   product: meterProduct * pow(2.0, Double(ev)),
                   limits: limits,
-                  stacked: stacked)
+                  stacked: stacked,
+                  handheld: handheld)
         }
         return BracketPlan(frames: frames,
                            meterProduct: meterProduct,
