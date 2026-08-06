@@ -85,6 +85,15 @@ final class CameraManager: NSObject, ObservableObject {
         didSet { UserDefaults.standard.set(handheldEnabled, forKey: "BracketCam.handheld") }
     }
 
+    /// Experiment ("A+0" pill): capture the 0 EV base frame as a normal
+    /// auto-exposure photo (ZSL on, .quality) BEFORE the manual ladder, so
+    /// Apple's multi-frame pipeline (Deep Fusion / Smart HDR) can produce it.
+    /// Best possible base frame — but its tone curve differs from the manual
+    /// frames, which may or may not upset the HDR merge. A/B via Esoft.
+    @Published var appleBaseEnabled: Bool = UserDefaults.standard.object(forKey: "BracketCam.appleBase") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(appleBaseEnabled, forKey: "BracketCam.appleBase") }
+    }
+
     let session = AVCaptureSession()
 
     // MARK: - Private
@@ -163,10 +172,12 @@ final class CameraManager: NSObject, ObservableObject {
 
             // Zero-shutter-lag assembles the "photo" from recently buffered
             // preview frames instead of doing a fresh exposure — poison for
-            // manual bracketing, where each shot must be exposed with the
-            // exact committed shutter/ISO. Force a real exposure per frame.
+            // manual bracketing, but REQUIRED for Deep Fusion. So it stays ON
+            // while idle (the Apple-processed +0 base frame is captured under
+            // auto exposure at the start of the sequence), gets switched OFF
+            // for the five manual ladder frames, and back ON afterwards.
             if photoOutput.isZeroShutterLagSupported {
-                photoOutput.isZeroShutterLagEnabled = false
+                photoOutput.isZeroShutterLagEnabled = true
             }
 
             try configureActiveDevice()
@@ -437,10 +448,41 @@ final class CameraManager: NSObject, ObservableObject {
             } catch { }
         }
 
+        // 2b. Apple-processed base frame ("A+0"): while exposure is STILL in
+        //     continuous auto and ZSL is still on, fire a normal .quality
+        //     capture — the one configuration where Deep Fusion / Smart HDR
+        //     can run. Slotted into the ladder at the 0 EV position below.
+        //     On failure the ladder simply shoots 0 EV manually as before.
+        var appleZero: Data?
+        if appleBaseEnabled, !useRaw {
+            await MainActor.run {
+                self.status = .capturing("Base frame (Apple processing)…")
+            }
+            appleZero = try? await capturePhoto(raw: false, prioritization: .quality)
+        }
+
+        // ZSL must be OFF for the manual frames — it fabricates photos from
+        // buffered preview frames instead of doing the committed exposure.
+        await onSessionQueueVoid { [self] in
+            if photoOutput.isZeroShutterLagSupported {
+                photoOutput.isZeroShutterLagEnabled = false
+            }
+        }
+
         // 3. Fire the ladder, darkest to brightest: -6 … +4.
         var images: [Data] = []
         let total = capturePlan.frames.count
         for (index, frame) in capturePlan.frames.enumerated() {
+            // The 0 EV slot is already covered by the Apple-processed base
+            // frame (captured under auto exposure above) — keep ladder order
+            // in the saved set so the library's 0 EV thumbnail logic holds.
+            if frame.evFromMeter == 0, let apple = appleZero {
+                images.append(apple)
+                await MainActor.run {
+                    self.status = .capturing("Frame \(index + 1)/\(total)  (0 EV) — Apple base ✓")
+                }
+                continue
+            }
             await MainActor.run {
                 self.status = .capturing("Frame \(index + 1)/\(total)  (\(frame.label) EV)…")
             }
@@ -556,6 +598,10 @@ final class CameraManager: NSObject, ObservableObject {
                 device.activeVideoMinFrameDuration = .invalid
                 device.unlockForConfiguration()
             } catch { }
+            // ZSL back on so the next bracket's Apple base frame can fuse.
+            if photoOutput.isZeroShutterLagSupported {
+                photoOutput.isZeroShutterLagEnabled = true
+            }
         }
         await MainActor.run { self.focusLocked = false }
     }

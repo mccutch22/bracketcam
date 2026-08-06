@@ -219,6 +219,22 @@ struct ContentView: View {
             Spacer()
             // RAW toggle removed for now: processing orders are JPG-only.
             // The capture path still supports RAW if we bring it back.
+            // Experiment: Apple-processed (Deep Fusion) base frame at 0 EV.
+            // Yellow = on. Here for the Esoft A/B; remove once verdict is in.
+            Button {
+                camera.appleBaseEnabled.toggle()
+            } label: {
+                Text("A+0")
+                    .font(.footnote.bold())
+                    .foregroundStyle(camera.appleBaseEnabled ? .yellow : .white.opacity(0.5))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.white.opacity(0.12))
+                    .clipShape(Capsule())
+                    .rotationEffect(orientation.angle)
+            }
+            .disabled(isBusy)
+
             Button {
                 camera.handheldEnabled.toggle()
             } label: {

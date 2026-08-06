@@ -216,6 +216,24 @@ path is untouched (verified working). Expect hand mode's deep shadows to be
 noisier than tripod mode — √12 stacking ≈ 1.8 stops back of the ~6 stops a
 1 s exposure buys; fine for daytime interiors, use the tripod for twilight.
 
+## Apple-processed base frame ("A+0" pill, experiment, 2026-08)
+
+Deep Fusion / Smart HDR only run under system-controlled exposure with ZSL
+enabled — impossible for the manual ladder frames (custom exposure disables
+all multi-frame processing, and ZSL fabricates photos from buffered preview
+frames instead of doing the committed exposure). But at the START of the
+sequence exposure is still continuous-auto and converged at exactly our
+"0 EV", so with A+0 on: ZSL stays enabled while idle, the base frame fires
+as a plain AE .quality capture (Deep Fusion eligible; cannot be forced or
+verified — Apple engages it opportunistically), THEN ZSL switches off for
+the five manual frames and back on in restoreContinuousModes. The Apple
+photo is slotted into ladder position 3 so set order and the library's 0 EV
+thumbnail logic hold. Falls back to a manual 0 EV frame if the AE capture
+fails; skipped in RAW mode. RISK being A/B-tested via Esoft: the fused
+frame's tone curve (local contrast, highlight recovery) differs from the
+manual frames', which can produce halos in HDR merges. If Esoft output is
+clean, keep; if not, revert = toggle off / delete the experiment.
+
 ## Known limitations / notes
 
 - Requires **Full** Photos access (album creation).
