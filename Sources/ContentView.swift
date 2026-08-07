@@ -192,66 +192,75 @@ struct ContentView: View {
         .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 
+    // Two rows: lenses (+ crop tag) on top, mode pills below. One combined
+    // row overflowed the screen width and silently clipped the TRIPOD/HAND
+    // pill off the right edge on iPhone 12.
     private var lensRow: some View {
-        HStack(spacing: 10) {
-            ForEach(camera.availableLenses) { lens in
+        VStack(spacing: 8) {
+            HStack(spacing: 10) {
+                ForEach(camera.availableLenses) { lens in
+                    Button {
+                        camera.selectLens(lens)
+                    } label: {
+                        Text(lens.rawValue)
+                            .font(.footnote.bold())
+                            .foregroundStyle(camera.currentLens == lens ? .yellow : .white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 6)
+                            .background(Color.white.opacity(camera.currentLens == lens ? 0.25 : 0.08))
+                            .clipShape(Capsule())
+                            .rotationEffect(orientation.angle)
+                    }
+                    .disabled(isBusy)
+                }
+                if camera.zoomFactor > 1.01 {
+                    Text(String(format: "%.1f× crop", camera.zoomFactor))
+                        .font(.caption.bold())
+                        .foregroundStyle(.yellow)
+                        .rotationEffect(orientation.angle)
+                        .onTapGesture { camera.setZoom(1.0) }
+                }
+                Spacer()
+            }
+
+            HStack(spacing: 10) {
+                // RAW toggle removed for now: processing orders are JPG-only.
                 Button {
-                    camera.selectLens(lens)
+                    camera.handheldEnabled.toggle()
                 } label: {
-                    Text(lens.rawValue)
+                    Text(camera.handheldEnabled ? "HAND" : "TRIPOD")
                         .font(.footnote.bold())
-                        .foregroundStyle(camera.currentLens == lens ? .yellow : .white)
+                        .foregroundStyle(camera.handheldEnabled ? .yellow : .white)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 6)
-                        .background(Color.white.opacity(camera.currentLens == lens ? 0.25 : 0.08))
+                        .background(Color.white.opacity(0.12))
                         .clipShape(Capsule())
                         .rotationEffect(orientation.angle)
                 }
                 .disabled(isBusy)
-            }
-            if camera.zoomFactor > 1.01 {
-                Text(String(format: "%.1f× crop", camera.zoomFactor))
-                    .font(.caption.bold())
-                    .foregroundStyle(.yellow)
-                    .rotationEffect(orientation.angle)
-                    .onTapGesture { camera.setZoom(1.0) }
-            }
-            Spacer()
-            // RAW toggle removed for now: processing orders are JPG-only.
-            // The capture path still supports RAW if we bring it back.
-            // Experiment: Apple-processed (Deep Fusion) base frame at 0 EV.
-            // Yellow = on. Here for the Esoft A/B; remove once verdict is in.
-            Button {
-                camera.appleBaseEnabled.toggle()
-            } label: {
-                Text("A+0")
-                    .font(.footnote.bold())
-                    .foregroundStyle(camera.appleBaseEnabled ? .yellow : .white.opacity(0.5))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Color.white.opacity(0.12))
-                    .clipShape(Capsule())
-                    .rotationEffect(orientation.angle)
-            }
-            .disabled(isBusy)
 
-            Button {
-                camera.handheldEnabled.toggle()
-            } label: {
-                Text(camera.handheldEnabled ? "HAND" : "TRIPOD")
-                    .font(.footnote.bold())
-                    .foregroundStyle(camera.handheldEnabled ? .yellow : .white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 6)
-                    .background(Color.white.opacity(0.12))
-                    .clipShape(Capsule())
-                    .rotationEffect(orientation.angle)
+                // Experiment: Apple-processed (Deep Fusion) base frame at
+                // 0 EV. Yellow = on. For the Esoft A/B; remove after verdict.
+                Button {
+                    camera.appleBaseEnabled.toggle()
+                } label: {
+                    Text("A+0")
+                        .font(.footnote.bold())
+                        .foregroundStyle(camera.appleBaseEnabled ? .yellow : .white.opacity(0.5))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.white.opacity(0.12))
+                        .clipShape(Capsule())
+                        .rotationEffect(orientation.angle)
+                }
+                .disabled(isBusy)
+
+                Spacer()
             }
-            .disabled(isBusy)
         }
         .padding(.horizontal, 12)
-        // Rotated capsules are taller than the row — give them room so they
-        // don't collide with the shutter row in landscape.
+        // Rotated capsules are taller than the rows — give them room so they
+        // don't collide with each other or the shutter row in landscape.
         .padding(.vertical, orientation.isLandscape ? 12 : 0)
     }
 
