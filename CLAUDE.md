@@ -189,32 +189,38 @@ hardware limits. Pinch = digital zoom (crop, applies to saved photos), yellow
 
 ## Handheld mode (TRIPOD/HAND pill, 2026-08)
 
-User verified Esoft aligns *between* bracket frames on handheld sets, so the
-app only has to keep each frame sharp and low-noise. HAND mode changes two
-things: the per-frame shutter cap drops from 1/15 s to **1/60 s**
-(`Tuning.handheldFrameMaxExposure` — reliably sharp in hand with OIS), and
-stacking switches to a motion-robust HDR+-style path in `FrameStacker`:
+HAND mode = per-frame shutter capped at **1/60 s**
+(`Tuning.handheldFrameMaxExposure`, reliably sharp in hand with OIS), every
+frame a SINGLE exposure (no stacking), shorter settle
+(`handheldSettleSeconds` 0.2 s) so the 6-frame ladder fires in a few
+seconds. ISO does the work in the bright frames; the +2/+4 shadows are
+noisy and that's accepted — sharp single high-ISO frames are what handheld
+DSLR brackets feed the editors every day, and their own cross-frame
+alignment handles them (user-verified at Esoft).
 
-1. Reference = **sharpest** frame of the burst (gradient energy on 512 px
-   thumbnails), not frame 0, which can carry shutter-press wobble.
-2. Global coarse-to-fine translation search (±16 px) per frame.
-3. **Per-tile refinement** (~500 px tiles, ±5 px around the global shift):
-   local translations approximate rotation/rolling shutter, and because a
-   rotation is a linearly varying shift field, bilinear interpolation of the
-   per-tile shifts between tile centers reproduces it exactly — the warp
-   uses the smoothly interpolated field, so no seams.
-4. **Robust merge**: tiles whose post-alignment residual exceeds 2.5× the
-   frame's median residual are rejected (weight 0, smoothly feathered) —
-   movers/failed alignment fall back to the reference instead of ghosting.
-   Frames with >60 % rejected tiles are skipped entirely. Accumulation is
-   per-pixel weighted (acc + weight planes); each pixel divides by its own
-   accumulated weight.
+**FIELD-TEST POSTMORTEM (2026-08-08), do not re-attempt without new
+evidence:** v1 of HAND mode stacked 12×1/60 s bursts per bright frame
+through an HDR+-style tile-aligned merge (per-tile search around a global
+shift, interpolated shift field, residual-based ghost rejection,
+sharpest-frame reference — the machinery is still in `FrameStacker`'s
+handheld path, currently unused). Result: alignment failure at Esoft AND
+two other editors. Cause: tile-warped composites assembled from seconds of
+hand motion are internally non-rigid, each frame rubber-sheeted
+differently, so the editors' rigid cross-frame alignment cannot converge.
+Even tripod mode shot handheld (soft 1 s exposures, but geometrically
+honest single frames) aligned better. A 2-frame set of unstacked frames
+(Apple A+0 base + one dark frame) aligned perfectly. Warped multi-frame
+composites and third-party HDR merge do not mix.
 
-Stack budget in hand mode is `handheldMaxStackFrames` (12) to keep a full
-bracket under ~10 s of holding still. Tripod mode's global-only alignment
-path is untouched (verified working). Expect hand mode's deep shadows to be
-noisier than tripod mode — √12 stacking ≈ 1.8 stops back of the ~6 stops a
-1 s exposure buys; fine for daytime interiors, use the tripod for twilight.
+If hand-mode shadow noise proves unacceptable, next levers in order:
+(1) capture bright frames via AE exposureTargetBias + ZSL/.quality so
+Apple's multi-frame pipeline processes them (A+0 generalized — bias range
+is ±8 EV on iPhones); (2) native AVCapturePhotoBracketSettings rapid-fire
+brackets (maxBracketedCapturePhotoCount is typically 3 → two bursts;
+bracketed stills skip fusion but inter-frame motion becomes tiny);
+(3) pre-aligning the six finals to the base before upload (cross-exposure
+alignment needs exposure normalization; last resort — risks reintroducing
+non-rigidity). Night mode has NO third-party API and cannot be used.
 
 ## Apple-processed base frame ("A+0" pill, experiment, 2026-08)
 

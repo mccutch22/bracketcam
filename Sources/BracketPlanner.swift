@@ -29,11 +29,14 @@ enum Tuning {
     static let maxStackFrames = 16
 
     /// Handheld mode: per-frame shutter never slower than this — with OIS,
-    /// 1/60 s is reliably sharp in hand — and stacking is the only noise
-    /// tool. Slightly smaller stack budget than tripod mode keeps a full
-    /// bracket under ~10 s of holding still.
+    /// 1/60 s is reliably sharp in hand. NO stacking (field-tested 2026-08:
+    /// tile-warped handheld composites are internally non-rigid, which broke
+    /// alignment at Esoft and two other editors — sharp single frames at
+    /// high ISO are what handheld DSLR brackets feed them every day, and
+    /// those align fine). Shorter settle keeps the whole 6-frame ladder to a
+    /// few seconds, which also minimizes pose drift between frames.
     static let handheldFrameMaxExposure: Double = 1.0 / 60.0
-    static let handheldMaxStackFrames = 12
+    static let handheldSettleSeconds: Double = 0.2
 
     /// The fixed exposure ladder, in EV relative to the scene meter, darkest
     /// first. -6 stands in for highlight protection: deep enough that window
@@ -109,12 +112,12 @@ enum BracketPlanner {
         var iso = Float(product / duration)
         iso = min(max(iso, limits.minISO), limits.maxISO)
 
+        // Handheld: always single frames — see handheldFrameMaxExposure note.
         var stackCount = 1
-        if stacked, duration > 0 {
+        if stacked, !handheld, duration > 0 {
             // The exposure we'd use with no per-frame cap (up to 1 s):
             let ideal = min(max(product / Double(limits.minISO), duration), limits.cap)
-            let maxStack = handheld ? Tuning.handheldMaxStackFrames : Tuning.maxStackFrames
-            stackCount = min(maxStack,
+            stackCount = min(Tuning.maxStackFrames,
                              max(1, Int((ideal / duration).rounded())))
         }
 

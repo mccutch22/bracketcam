@@ -487,7 +487,10 @@ final class CameraManager: NSObject, ObservableObject {
                 self.status = .capturing("Frame \(index + 1)/\(total)  (\(frame.label) EV)…")
             }
             await setCustomExposure(duration: frame.duration, iso: frame.iso)
-            try? await Task.sleep(nanoseconds: UInt64(Tuning.settleSeconds * 1_000_000_000))
+            // Handheld frames are all short exposures — a shorter settle keeps
+            // the ladder fast, which minimizes pose drift between frames.
+            let settle = handheld ? Tuning.handheldSettleSeconds : Tuning.settleSeconds
+            try? await Task.sleep(nanoseconds: UInt64(settle * 1_000_000_000))
 
             // Show what the sensor ACTUALLY accepted — ground truth on screen,
             // no EXIF archaeology needed to see if a fix worked.
