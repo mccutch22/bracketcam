@@ -2,8 +2,7 @@ import SwiftUI
 import Photos
 
 /// One captured bracket stack = one album inside the "RE Brackets" folder.
-/// The stack is represented by its 0 EV frame (index 3 of the 6-frame
-/// ladder [-6, -4, -2, 0, +2, +4]).
+/// The stack is represented by its 0 EV frame (the middle of the ladder).
 struct StackItem: Identifiable {
     let id: String                 // album localIdentifier
     let title: String
@@ -46,9 +45,11 @@ final class LibraryModel: ObservableObject {
                 guard let album = child as? PHAssetCollection else { return }
                 let assets = PHAsset.fetchAssets(in: album, options: nil)
                 guard assets.count > 0 else { return }
-                // Album order is capture order (darkest first) — the 0 EV
-                // frame sits at index 3 of a full 6-frame stack.
-                let rep = assets.object(at: min(3, assets.count - 1))
+                // Album order is capture order (darkest first). The 0 EV
+                // frame sits at index 3 of the 6-frame tripod ladder
+                // (-6,-4,-2,0,+2,+4) and index 2 of the 4-frame handheld
+                // ladder (-6,-3,0,+3) — count/2 lands on it in both.
+                let rep = assets.object(at: min(assets.count / 2, assets.count - 1))
                 items.append(StackItem(id: album.localIdentifier,
                                        title: album.localizedTitle ?? "Bracket",
                                        date: rep.creationDate,

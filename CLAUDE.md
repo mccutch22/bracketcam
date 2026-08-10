@@ -192,11 +192,15 @@ hardware limits. Pinch = digital zoom (crop, applies to saved photos), yellow
 HAND mode = per-frame shutter capped at **1/60 s**
 (`Tuning.handheldFrameMaxExposure`, reliably sharp in hand with OIS), every
 frame a SINGLE exposure (no stacking), shorter settle
-(`handheldSettleSeconds` 0.2 s) so the 6-frame ladder fires in a few
-seconds. ISO does the work in the bright frames; the +2/+4 shadows are
-noisy and that's accepted — sharp single high-ISO frames are what handheld
-DSLR brackets feed the editors every day, and their own cross-frame
-alignment handles them (user-verified at Esoft).
+(`handheldSettleSeconds` 0.2 s), and a shorter ladder:
+**`Tuning.handheldLadderEVs = [-6, -3, 0, +3]`** — 4 frames at 3-stop
+spacing (the handheld-DSLR standard the editors process daily), same -6
+window insurance, +3 not +4 because the shutter floor ISO-clamps the
+brightest frame anyway. Whole bracket fires in ~3-4 s. ISO does the work
+in the bright frames; shadow noise accepted. Field status (2026-08-09):
+single-frame handheld sets align well at autohdr.com, slightly less well
+at Esoft. The library thumbnail picks `assets.count / 2` (0 EV in both
+ladders). Tripod keeps the 6-frame 2-stop ladder — proven with Esoft.
 
 **FIELD-TEST POSTMORTEM (2026-08-08), do not re-attempt without new
 evidence:** v1 of HAND mode stacked 12×1/60 s bursts per bright frame
@@ -222,23 +226,18 @@ bracketed stills skip fusion but inter-frame motion becomes tiny);
 alignment needs exposure normalization; last resort — risks reintroducing
 non-rigidity). Night mode has NO third-party API and cannot be used.
 
-## Apple-processed base frame ("A+0" pill, experiment, 2026-08)
+## Apple-processed base frame ("A+0") — REMOVED, do not re-attempt
 
-Deep Fusion / Smart HDR only run under system-controlled exposure with ZSL
-enabled — impossible for the manual ladder frames (custom exposure disables
-all multi-frame processing, and ZSL fabricates photos from buffered preview
-frames instead of doing the committed exposure). But at the START of the
-sequence exposure is still continuous-auto and converged at exactly our
-"0 EV", so with A+0 on: ZSL stays enabled while idle, the base frame fires
-as a plain AE .quality capture (Deep Fusion eligible; cannot be forced or
-verified — Apple engages it opportunistically), THEN ZSL switches off for
-the five manual frames and back on in restoreContinuousModes. The Apple
-photo is slotted into ladder position 3 so set order and the library's 0 EV
-thumbnail logic hold. Falls back to a manual 0 EV frame if the AE capture
-fails; skipped in RAW mode. RISK being A/B-tested via Esoft: the fused
-frame's tone curve (local contrast, highlight recovery) differs from the
-manual frames', which can produce halos in HDR merges. If Esoft output is
-clean, keep; if not, revert = toggle off / delete the experiment.
+Experiment (2026-08-06 → 08-09): the 0 EV base frame was captured as a
+plain AE .quality photo with ZSL on at sequence start — the only
+configuration where Deep Fusion / Smart HDR can run (custom exposure
+disables all multi-frame processing; ZSL fabricates photos from buffered
+preview frames; Night mode has no third-party API at all). FIELD VERDICT:
+**the fused frame broke the editors' cross-frame alignment** (its
+internally-fused geometry/tone doesn't register against plain ISP frames),
+and the user also found it noisier than expected. Removed entirely; ZSL is
+back to always-off. Same lesson as the handheld stacking postmortem below:
+frames that aren't plain single exposures poison third-party HDR merges.
 
 ## Known limitations / notes
 

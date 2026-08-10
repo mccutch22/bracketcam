@@ -40,8 +40,16 @@ enum Tuning {
 
     /// The fixed exposure ladder, in EV relative to the scene meter, darkest
     /// first. -6 stands in for highlight protection: deep enough that window
-    /// highlights survive in any realistic interior.
+    /// highlights survive in any realistic interior. Tripod only.
     static let ladderEVs: [Int] = [-6, -4, -2, 0, 2, 4]
+
+    /// Handheld ladder: 4 frames at 3-stop spacing. Same window insurance
+    /// (-6) and near-same total range; merge software handles 3-stop-spaced
+    /// brackets routinely (the handheld-DSLR standard). Fewer frames =
+    /// faster capture (less pose drift) and fewer chances for the editors'
+    /// alignment to slip. +3 rather than +4 because the 1/60 s shutter floor
+    /// ISO-clamps the brightest frame anyway in most rooms.
+    static let handheldLadderEVs: [Int] = [-6, -3, 0, 3]
 }
 
 /// Exposure limits of the active format, queried at runtime — never hardcoded.
@@ -84,8 +92,10 @@ struct BracketPlan {
     let limits: DeviceExposureLimits
 
     var allAtBaseISO: Bool { frames.allSatisfy { $0.iso <= limits.minISO } }
+    /// The brightest (last) frame couldn't reach its target — deep shadows
+    /// may stay underexposed. (+4 on the tripod ladder, +3 handheld.)
     var plusFourUnderexposed: Bool {
-        frames.first(where: { $0.evFromMeter == 4 })?.isUnderexposed ?? false
+        frames.last?.isUnderexposed ?? false
     }
 }
 
@@ -136,7 +146,8 @@ enum BracketPlanner {
                      limits: DeviceExposureLimits,
                      stacked: Bool,
                      handheld: Bool = false) -> BracketPlan {
-        let frames = Tuning.ladderEVs.map { ev in
+        let evs = handheld ? Tuning.handheldLadderEVs : Tuning.ladderEVs
+        let frames = evs.map { ev in
             frame(ev: ev,
                   product: meterProduct * pow(2.0, Double(ev)),
                   limits: limits,

@@ -102,7 +102,7 @@ struct ContentView: View {
                         // The full explanation doesn't fit rotated in landscape.
                         badge(orientation.isLandscape
                                 ? "VERY DARK"
-                                : "VERY DARK: +4 limited even at max ISO — deep shadows may stay underexposed",
+                                : "VERY DARK: brightest frame limited even at max ISO — deep shadows may stay underexposed",
                               color: .orange)
                     }
                     Spacer()
@@ -238,22 +238,8 @@ struct ContentView: View {
                         .rotationEffect(orientation.angle)
                 }
                 .disabled(isBusy)
-
-                // Experiment: Apple-processed (Deep Fusion) base frame at
-                // 0 EV. Yellow = on. For the Esoft A/B; remove after verdict.
-                Button {
-                    camera.appleBaseEnabled.toggle()
-                } label: {
-                    Text("A+0")
-                        .font(.footnote.bold())
-                        .foregroundStyle(camera.appleBaseEnabled ? .yellow : .white.opacity(0.5))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(Color.white.opacity(0.12))
-                        .clipShape(Capsule())
-                        .rotationEffect(orientation.angle)
-                }
-                .disabled(isBusy)
+                // (The "A+0" Apple-fusion base frame experiment lived here;
+                // removed 2026-08-09 — it broke the editors' alignment.)
 
                 Spacer()
             }
@@ -277,8 +263,9 @@ struct ContentView: View {
         case .capturing(let step): return step
         case .saving: return "Saving to Photos…"
         case .ready:
+            let frameCount = camera.plan?.frames.count ?? 6
             return camera.focusLocked
-                ? "Tap shutter to fire the 6-frame bracket (-6 to +4 EV)"
+                ? "Tap shutter to fire the \(frameCount)-frame bracket"
                 : (camera.handheldEnabled
                     ? "HAND mode • tap to focus • brace your elbows"
                     : "Tap to focus • pinch to zoom • tripod essential")
