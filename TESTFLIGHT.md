@@ -29,7 +29,9 @@ invite by email). Everything below happens in a web browser.
 
 - App Store Connect → **Users and Access** → **Integrations** tab →
   **App Store Connect API** → **Team Keys** → blue **+**.
-- Name: `GitHub CI`. Access: **App Manager**. **Generate**.
+- Name: `GitHub CI`. Access: **Admin** — App Manager is NOT enough: cloud
+  signing (creating certificates/profiles) fails with "Cloud signing
+  permission error", and keys can't be upgraded after creation. **Generate**.
 - Click **Download API Key** (.p8 file) — you get ONE chance; keep the file.
 - Note the key's **Key ID** (in the table row) and the **Issuer ID**
   (shown at the top of the page).
