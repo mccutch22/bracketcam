@@ -30,11 +30,15 @@ jobs:
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
         run: printf '%s' "$ASC_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
 
-      # The archive itself is unsigned (same as the Sideloadly pipeline);
-      # signing happens at export, where -allowProvisioningUpdates plus the
-      # API key lets Xcode create/download a cloud-managed Apple Distribution
-      # certificate and provisioning profile automatically.
-      - name: Archive
+      # Signed at archive time: -allowProvisioningUpdates plus the API key
+      # lets Xcode create/download a cloud-managed Apple Distribution
+      # certificate and provisioning profile automatically. (Exporting an
+      # UNSIGNED archive was refused by exportArchive — first-run failure.)
+      - name: Archive (cloud-signed)
+        env:
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: |
           set -o pipefail
           xcodebuild archive \
@@ -43,8 +47,14 @@ jobs:
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/PhotoDash.xcarchive" \
-            CODE_SIGNING_ALLOWED=NO \
-            | tail -60
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/AuthKey.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            | tail -80
 
       - name: Write export options
         env:
