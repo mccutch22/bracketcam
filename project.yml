@@ -17,7 +17,7 @@ targets:
     info:
       path: Sources/Info.plist
       properties:
-        CFBundleDisplayName: Photo Dash
+        CFBundleDisplayName: PhotoDash
         CFBundleShortVersionString: "2.0"
         CFBundleVersion: "2"
         UILaunchScreen: {}
