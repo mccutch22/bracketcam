@@ -26,12 +26,14 @@ targets:
         UIRequiredDeviceCapabilities:
           - arm64
         ITSAppUsesNonExemptEncryption: false
+        CFBundleIconName: AppIcon
         NSCameraUsageDescription: Photo Dash uses the camera to shoot HDR exposure brackets.
         NSPhotoLibraryUsageDescription: Photo Dash saves each bracket set to its own album and shows your stacks in the library for ordering.
         NSPhotoLibraryAddUsageDescription: Photo Dash saves captured brackets to your photo library.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.photodash.app
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1"          # iPhone only
         SWIFT_VERSION: "5.9"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"

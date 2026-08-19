@@ -16,6 +16,19 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
+      # App Store Connect rejects uploads built with older SDKs — pick the
+      # newest Xcode 26.x on the runner (the default is older).
+      - name: Select Xcode 26
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE" ]; then
+            echo "No Xcode 26 on this runner. Available:"
+            ls /Applications | grep -i xcode || true
+            exit 1
+          fi
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
       - name: Install XcodeGen
         run: brew install xcodegen
 
