@@ -100,7 +100,7 @@ struct PhotoDashSubmissionView: View {
     @StateObject private var model = SubmissionModel()
     @Environment(\.dismiss) private var dismiss
     @State private var showNewHome = false
-    @State private var homeRequestID = UUID().uuidString.lowercased()
+    @AppStorage("photodash.pendingHomeRequestID") private var homeRequestID = UUID().uuidString.lowercased()
     @State private var street = ""
     @State private var city = ""
     @State private var state = ""

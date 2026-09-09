@@ -104,6 +104,9 @@ struct LibraryView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Done") { dismiss() }
                 }
+                ToolbarItem(placement: .bottomBar) {
+                    Button("Account & submissions") { showOrderSheet = true }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(model.selected.count == model.stacks.count && !model.stacks.isEmpty
                            ? "Deselect All" : "Select All") {
@@ -247,4 +250,3 @@ private struct StackThumbnail: View {
         }
     }
 }
-
