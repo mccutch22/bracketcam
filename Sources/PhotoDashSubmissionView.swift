@@ -168,6 +168,9 @@ struct PhotoDashSubmissionView: View {
                 TextField("State", text: $state)
                 TextField("ZIP code", text: $postalCode)
                 Button("Save home") {
+                    // AppStorage defaults are not persisted until written. Save before
+                    // the request so a force-quit cannot create a second draft on retry.
+                    UserDefaults.standard.set(homeRequestID, forKey: "photodash.pendingHomeRequestID")
                     Task {
                         await model.createHome(["requestId": homeRequestID, "street": street, "city": city, "state": state, "postalCode": postalCode])
                         if model.error == nil { showNewHome = false; homeRequestID = UUID().uuidString.lowercased(); street = ""; city = ""; state = ""; postalCode = "" }
