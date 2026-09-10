@@ -62,7 +62,7 @@ final class SubmissionModel: ObservableObject {
             let remote: JobsReply = try await api.request("homes/\(home.slug)/brackets")
             let remaining = stacks.filter { stack in
                 guard let saved = journal.first(where: { $0.userID == account.user.id && $0.albumID == stack.id && $0.home.id == home.id }), let job = remote.jobs.first(where: { $0.id == saved.id }) else { return true }
-                return job.status == "ready" || job.canRetry == true
+                return (job.status == "ready" || job.canRetry == true) && job.creditReserved != true
             }.count
             let balance: DashWallet = try await api.request("credits")
             guard balance.balance >= remaining else { throw DashFailure(message: "You need \(remaining) credits and have \(balance.balance). Tap Buy credits, then return here to send your saved selection.") }
