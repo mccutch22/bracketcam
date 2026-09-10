@@ -3,10 +3,10 @@
 The Library sends selected complete JPEG stacks to the same PhotoDash account and home used on the website. Capture, exposure ladders, and Photos originals are unchanged.
 
 1. Capture stacks, then open Library and select their thumbnails.
-2. Tap Send to PhotoDash. Sign in with the same Google account as the website and confirm Connect PhotoDash Camera.
+2. Tap Next. Sign in with the same Google account as the website and confirm Connect PhotoDash Camera.
 3. Choose an existing home, or enter an address to save a new draft.
-4. Tap Upload & process selected stacks. Keep the app open while uploading.
-5. Open View processing & finished photos. On the website, sign in with the same account if needed. The home’s bracket page shows Esoft processing and delivered results; add a finished photo to its gallery for marketing products.
+4. Tap the large Upload & process photos button. Keep the app open while uploading.
+5. Open View photo gallery. On the website, sign in with the same account if needed. Finished photos are added to the gallery automatically. Web bracket-upload tools are limited to superusers and authorized photographers.
 
 The current build targets the existing Hostinger temporary origin in PhotoDashConfig. Change that one public origin when the domain launches. No service secrets belong in the app.
 
