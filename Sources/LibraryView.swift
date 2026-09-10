@@ -85,6 +85,8 @@ struct LibraryView: View {
 
     var body: some View {
         NavigationStack {
+            VStack(spacing: 12) {
+                Text("Select photos for processing").font(.title2.bold()).multilineTextAlignment(.center).padding(.horizontal)
             Group {
                 if !model.loaded {
                     ProgressView().tint(.white)
@@ -96,9 +98,10 @@ struct LibraryView: View {
                     grid
                 }
             }
+            }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.black)
-            .navigationTitle("Library")
+            .navigationTitle("Photos")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -142,9 +145,7 @@ struct LibraryView: View {
             Button {
                 showOrderSheet = true
             } label: {
-                Text(model.selected.isEmpty
-                     ? "Select stacks to process"
-                     : "Send \(model.selected.count) \(model.selected.count == 1 ? "stack" : "stacks") to PhotoDash")
+                Text("Next")
                     .font(.headline)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)

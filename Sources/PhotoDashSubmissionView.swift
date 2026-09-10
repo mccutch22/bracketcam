@@ -110,10 +110,6 @@ struct PhotoDashSubmissionView: View {
         NavigationStack {
             Form {
                 if let account = model.account {
-                    Section("PhotoDash account") {
-                        Text(account.user.email)
-                        Button("Sign out", role: .destructive) { Task { await model.signOut() } }.disabled(model.busy)
-                    }
                     if !account.processingAvailable {
                         Text("Camera processing is currently available to the PhotoDash pilot account. Your captured photos remain in Photos.")
                     } else {
@@ -129,7 +125,7 @@ struct PhotoDashSubmissionView: View {
                 else if !model.status.isEmpty { Section { Text(model.status) } }
                 if let error = model.error { Section("Needs attention") { Text(error).foregroundStyle(.orange) } }
                 if let home = model.chosenHome {
-                    Section { Link("View processing & finished photos", destination: PhotoDashConfig.website(home.slug)) }
+                    Section { Link("View photo gallery", destination: PhotoDashConfig.website(home.slug)) }
                 }
                 if !model.history.isEmpty {
                     Section("Saved submissions") {
@@ -147,7 +143,12 @@ struct PhotoDashSubmissionView: View {
             }
             .navigationTitle("Send to PhotoDash")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .topBarLeading) { Button("Done") { dismiss() }.disabled(model.busy) } }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("Back") { dismiss() }.disabled(model.busy) }
+                ToolbarItem(placement: .topBarTrailing) {
+                    if model.account != nil { Menu { Button("Sign out", role: .destructive) { Task { await model.signOut() } } } label: { Image(systemName: "person.crop.circle") }.accessibilityLabel("Account").disabled(model.busy) }
+                }
+            }
             .task { await model.load() }
             .interactiveDismissDisabled(model.busy)
         }
@@ -181,7 +182,11 @@ struct PhotoDashSubmissionView: View {
         Section {
             Text("\(stacks.count) selected \(stacks.count == 1 ? "stack" : "stacks") · one finished photo per stack")
             Text(account.environment == "development" ? "Esoft test processing. This pilot does not collect payment." : "PhotoDash processing pilot. Checkout is not enabled in this build.").font(.caption).foregroundStyle(.secondary)
-            Button(model.finished ? "Sent to PhotoDash" : "Upload & process selected stacks") { Task { await model.submit(stacks) } }
+            Button { Task { await model.submit(stacks) } } label: {
+                Text(model.finished ? "Sent to PhotoDash" : model.busy ? "Uploading…" : "Upload & process photos")
+                    .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 14)
+            }
+                .buttonStyle(.borderedProminent).tint(.blue).controlSize(.large)
                 .disabled(model.busy || model.finished || model.chosenHome == nil || stacks.isEmpty || showNewHome)
             Text("Keep the app open while uploading. Originals stay in your Photos library and private PhotoDash storage.").font(.caption).foregroundStyle(.secondary)
         }

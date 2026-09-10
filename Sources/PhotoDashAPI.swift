@@ -8,7 +8,7 @@ enum PhotoDashConfig {
     // Public web origin only. Provider, storage and Google secrets stay on the server.
     static let origin = URL(string: "https://orangered-armadillo-437592.hostingersite.com")!
     static func website(_ slug: String) -> URL {
-        origin.appendingPathComponent("homes").appendingPathComponent(slug).appendingPathComponent("brackets")
+        origin.appendingPathComponent("homes").appendingPathComponent(slug).appendingPathComponent("gallery")
     }
 }
 
