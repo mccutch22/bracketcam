@@ -13,7 +13,7 @@ enum PhotoDashConfig {
 }
 
 struct DashUser: Codable { let id: String; let email: String; let displayName: String? }
-struct DashAccount: Decodable { let user: DashUser; let processingAvailable: Bool; let environment: String }
+struct DashAccount: Decodable { let user: DashUser; let processingAvailable: Bool; let environment: String; let credits: DashWallet? }
 struct DashHome: Codable, Identifiable, Hashable { let id: String; let slug: String; let street: String; let locality: String }
 struct DashJob: Decodable, Identifiable {
     let id: String; let status: String; let message: String?; let canRetry: Bool?

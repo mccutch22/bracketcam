@@ -23,6 +23,7 @@ final class SubmissionModel: ObservableObject {
     private func loadAccount() async throws {
         let loaded: DashAccount = try await api.request("me")
         account = loaded
+        await PhotoDashCredits.shared.load()
         let reply: HomesReply = try await api.request("homes")
         homes = reply.homes
         if !homes.contains(where: { $0.slug == chosenSlug }) { chosenSlug = homes.first?.slug ?? "" }
@@ -36,7 +37,7 @@ final class SubmissionModel: ObservableObject {
     func signOut() async {
         busy = true; error = nil
         defer { busy = false }
-        do { try await api.signOut(); account = nil; homes = []; history = []; finished = false; status = "" } catch { show(error) }
+        do { try await api.signOut(); PhotoDashCredits.shared.clear(); account = nil; homes = []; history = []; finished = false; status = "" } catch { show(error) }
     }
     func createHome(_ fields: [String: String]) async {
         busy = true; error = nil
@@ -59,6 +60,12 @@ final class SubmissionModel: ObservableObject {
             // Persist IDs before the first network request; retries reuse the same IDs.
             try UploadJournal.save(journal)
             let remote: JobsReply = try await api.request("homes/\(home.slug)/brackets")
+            let remaining = stacks.filter { stack in
+                guard let saved = journal.first(where: { $0.userID == account.user.id && $0.albumID == stack.id && $0.home.id == home.id }), let job = remote.jobs.first(where: { $0.id == saved.id }) else { return true }
+                return job.status == "ready" || job.canRetry == true
+            }.count
+            let balance: DashWallet = try await api.request("credits")
+            guard balance.balance >= remaining else { throw DashFailure(message: "You need \(remaining) credits and have \(balance.balance). Tap Buy credits, then return here to send your saved selection.") }
             for (number, stack) in stacks.enumerated() {
                 guard let index = journal.firstIndex(where: { $0.userID == account.user.id && $0.albumID == stack.id && $0.home.id == home.id }) else { continue }
                 let entry = journal[index]
@@ -88,6 +95,7 @@ final class SubmissionModel: ObservableObject {
             finished = true
             status = "\(stacks.count) \(stacks.count == 1 ? "stack is" : "stacks are") saved to \(home.street). Check processing and retrieve finished photos on the website."
         } catch { show(error) }
+        await PhotoDashCredits.shared.load()
     }
     private func show(_ failure: Error) {
         error = failure.localizedDescription
@@ -100,6 +108,8 @@ struct PhotoDashSubmissionView: View {
     @StateObject private var model = SubmissionModel()
     @Environment(\.dismiss) private var dismiss
     @State private var showNewHome = false
+    @State private var showCredits = false
+    @ObservedObject private var credits = PhotoDashCredits.shared
     @AppStorage("photodash.pendingHomeRequestID") private var homeRequestID = UUID().uuidString.lowercased()
     @State private var street = ""
     @State private var city = ""
@@ -110,6 +120,10 @@ struct PhotoDashSubmissionView: View {
         NavigationStack {
             Form {
                 if let account = model.account {
+                    Section("Photo credits") {
+                        Text("\(credits.wallet?.balance ?? account.credits?.balance ?? 0) credits available")
+                        Button("Buy credits") { showCredits = true }.disabled(model.busy)
+                    }
                     if !account.processingAvailable {
                         Text("Camera processing is currently available to the PhotoDash pilot account. Your captured photos remain in Photos.")
                     } else {
@@ -151,6 +165,7 @@ struct PhotoDashSubmissionView: View {
             }
             .task { await model.load() }
             .interactiveDismissDisabled(model.busy)
+            .sheet(isPresented: $showCredits) { PhotoDashCreditsView() }
         }
         .preferredColorScheme(.dark)
     }
@@ -181,7 +196,8 @@ struct PhotoDashSubmissionView: View {
         }
         Section {
             Text("\(stacks.count) selected \(stacks.count == 1 ? "stack" : "stacks") · one finished photo per stack")
-            Text(account.environment == "development" ? "Esoft test processing. This pilot does not collect payment." : "PhotoDash processing pilot. Checkout is not enabled in this build.").font(.caption).foregroundStyle(.secondary)
+            Text("Costs 1 credit per photo sent for processing. Previously submitted photos are not charged again.").font(.caption).foregroundStyle(.secondary)
+            if credits.wallet?.mode == "test" { Text("Test credits · Esoft development processing").font(.caption).foregroundStyle(.orange) }
             Button { Task { await model.submit(stacks) } } label: {
                 Text(model.finished ? "Sent to PhotoDash" : model.busy ? "Uploading…" : "Upload & process photos")
                     .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 14)

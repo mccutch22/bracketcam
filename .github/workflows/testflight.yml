@@ -16,6 +16,14 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
+      - name: Configure PhotoDash credit product
+        continue-on-error: true
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: node scripts/setup-credits.mjs
+
       # App Store Connect rejects uploads built with older SDKs — pick the
       # newest Xcode 26.x on the runner (the default is older).
       - name: Select Xcode 26
