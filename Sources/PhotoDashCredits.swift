@@ -19,7 +19,7 @@ final class PhotoDashCredits: ObservableObject {
     private var listener: Task<Void, Never>?
     private init() {
         listener = Task { [weak self] in
-            for await result in Transaction.updates {
+            for await result in StoreKit.Transaction.updates {
                 guard let self, DashKeychain.read() != nil else { continue }
                 do { try await self.deliver(result) }
                 catch { self.message = "Purchase saved by Apple. Sign in to the account used to buy it and tap Sync purchases to finish adding credits." }
@@ -38,12 +38,12 @@ final class PhotoDashCredits: ObservableObject {
         busy = true; message = ""
         defer { busy = false }
         do {
-            for await result in Transaction.unfinished { try await deliver(result) }
+            for await result in StoreKit.Transaction.unfinished { try await deliver(result) }
             await load()
             if message.isEmpty { message = "Credit balance is up to date." }
         } catch { message = error.localizedDescription }
     }
-    private func deliver(_ result: VerificationResult<Transaction>) async throws {
+    private func deliver(_ result: VerificationResult<StoreKit.Transaction>) async throws {
         guard case .verified(let transaction) = result else { throw DashFailure(message: "Apple could not verify this purchase.") }
         let current: DashWallet = try await api.request("credits")
         guard transaction.appAccountToken?.uuidString.lowercased() == current.appAccountToken.lowercased() else {
