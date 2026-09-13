@@ -80,6 +80,7 @@ struct LibraryView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var model = LibraryModel()
     @State private var showOrderSheet = false
+    @State private var accountOnly = false
 
     private let columns = [GridItem(.adaptive(minimum: 110), spacing: 4)]
 
@@ -108,7 +109,7 @@ struct LibraryView: View {
                     Button("Done") { dismiss() }
                 }
                 ToolbarItem(placement: .bottomBar) {
-                    Button("Account & submissions") { showOrderSheet = true }
+                    Button("Your Homes and Account") { accountOnly = true; showOrderSheet = true }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(model.selected.count == model.stacks.count && !model.stacks.isEmpty
@@ -123,7 +124,7 @@ struct LibraryView: View {
         .preferredColorScheme(.dark)
         .task { await model.load() }
         .sheet(isPresented: $showOrderSheet) {
-            PhotoDashSubmissionView(stacks: model.stacks.filter { model.selected.contains($0.id) })
+            PhotoDashSubmissionView(stacks: accountOnly ? [] : model.stacks.filter { model.selected.contains($0.id) })
         }
     }
 
@@ -143,6 +144,7 @@ struct LibraryView: View {
     private var processBar: some View {
         VStack(spacing: 6) {
             Button {
+                accountOnly = false
                 showOrderSheet = true
             } label: {
                 Text("Next")

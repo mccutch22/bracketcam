@@ -124,7 +124,7 @@ struct PhotoDashSubmissionView: View {
                         Text("\(credits.wallet?.balance ?? account.credits?.balance ?? 0) credits available")
                         Button("Buy credits") { showCredits = true }.disabled(model.busy)
                     }
-                    if !account.processingAvailable {
+                    if !account.processingAvailable && !stacks.isEmpty {
                         Text("Camera processing is currently available to the PhotoDash pilot account. Your captured photos remain in Photos.")
                     } else {
                         submissionSections(account)
@@ -155,7 +155,7 @@ struct PhotoDashSubmissionView: View {
                     }
                 }
             }
-            .navigationTitle("Send to PhotoDash")
+            .navigationTitle(stacks.isEmpty ? "Your Homes and Account" : "Send to PhotoDash")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { Button("Back") { dismiss() }.disabled(model.busy) }
@@ -194,7 +194,7 @@ struct PhotoDashSubmissionView: View {
                 }.disabled(model.busy || [street, city, state, postalCode].contains(where: { $0.trimmingCharacters(in: .whitespaces).isEmpty }))
             }
         }
-        Section {
+        if !stacks.isEmpty { Section {
             Text("\(stacks.count) selected \(stacks.count == 1 ? "stack" : "stacks") · one finished photo per stack")
             Text("Costs 1 credit per photo sent for processing. Previously submitted photos are not charged again.").font(.caption).foregroundStyle(.secondary)
             if credits.wallet?.mode == "test" { Text("Test credits · Esoft development processing").font(.caption).foregroundStyle(.orange) }
@@ -205,6 +205,6 @@ struct PhotoDashSubmissionView: View {
                 .buttonStyle(.borderedProminent).tint(.blue).controlSize(.large)
                 .disabled(model.busy || model.finished || model.chosenHome == nil || stacks.isEmpty || showNewHome)
             Text("Keep the app open while uploading. Originals stay in your Photos library and private PhotoDash storage.").font(.caption).foregroundStyle(.secondary)
-        }
+        } }
     }
 }
