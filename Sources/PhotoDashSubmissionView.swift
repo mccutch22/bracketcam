@@ -111,10 +111,9 @@ struct PhotoDashSubmissionView: View {
     @State private var showCredits = false
     @ObservedObject private var credits = PhotoDashCredits.shared
     @AppStorage("photodash.pendingHomeRequestID") private var homeRequestID = UUID().uuidString.lowercased()
-    @State private var street = ""
-    @State private var city = ""
-    @State private var state = ""
-    @State private var postalCode = ""
+    @StateObject private var addressSearch = AddressSearchModel { fields in
+        try await PhotoDashAPI().request("address", method: "POST", body: fields)
+    }
 
     var body: some View {
         NavigationStack {
@@ -166,6 +165,8 @@ struct PhotoDashSubmissionView: View {
             .task { await model.load() }
             .interactiveDismissDisabled(model.busy)
             .sheet(isPresented: $showCredits) { PhotoDashCreditsView() }
+            .onDisappear { addressSearch.cancel() }
+            .onChange(of: model.account?.user.id) { _, _ in addressSearch.reset(); showNewHome = false }
         }
         .preferredColorScheme(.dark)
     }
@@ -177,21 +178,20 @@ struct PhotoDashSubmissionView: View {
                     ForEach(model.homes) { home in Text("\(home.street), \(home.locality)").tag(home.slug) }
                 }.disabled(model.busy || model.finished)
             }
-            Button(showNewHome ? "Cancel new home" : "Create a new home") { showNewHome.toggle() }.disabled(model.busy || model.finished)
+            Button(showNewHome ? "Cancel new home" : "Create a new home") { showNewHome.toggle(); addressSearch.reset() }.disabled(model.busy || model.finished)
             if showNewHome {
-                TextField("Street address", text: $street)
-                TextField("City", text: $city)
-                TextField("State", text: $state)
-                TextField("ZIP code", text: $postalCode)
+                HomeAddressFields(search: addressSearch).disabled(model.busy)
                 Button("Save home") {
                     // AppStorage defaults are not persisted until written. Save before
                     // the request so a force-quit cannot create a second draft on retry.
                     UserDefaults.standard.set(homeRequestID, forKey: "photodash.pendingHomeRequestID")
                     Task {
-                        await model.createHome(["requestId": homeRequestID, "street": street, "city": city, "state": state, "postalCode": postalCode])
-                        if model.error == nil { showNewHome = false; homeRequestID = UUID().uuidString.lowercased(); street = ""; city = ""; state = ""; postalCode = "" }
+                        var fields = addressSearch.address.fields
+                        fields["requestId"] = homeRequestID
+                        await model.createHome(fields)
+                        if model.error == nil { showNewHome = false; homeRequestID = UUID().uuidString.lowercased(); addressSearch.reset() }
                     }
-                }.disabled(model.busy || [street, city, state, postalCode].contains(where: { $0.trimmingCharacters(in: .whitespaces).isEmpty }))
+                }.disabled(model.busy || addressSearch.loading || !addressSearch.address.isComplete)
             }
         }
         if !stacks.isEmpty { Section {

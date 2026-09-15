@@ -45,6 +45,11 @@ jobs:
           swiftc -parse-as-library Sources/CapturePreparation.swift Tests/CapturePreparationChecks.swift -o "$RUNNER_TEMP/capture-preparation-checks"
           "$RUNNER_TEMP/capture-preparation-checks"
 
+      - name: Check address search
+        run: |
+          swiftc -parse-as-library Sources/AddressSearchModel.swift Tests/AddressSearchChecks.swift -o "$RUNNER_TEMP/address-search-checks"
+          "$RUNNER_TEMP/address-search-checks"
+
       - name: Generate Xcode project
         run: xcodegen generate
 
