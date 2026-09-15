@@ -18,8 +18,12 @@ targets:
       path: Sources/Info.plist
       properties:
         CFBundleDisplayName: PhotoDash
-        CFBundleShortVersionString: "2.0"
+        CFBundleShortVersionString: "2.1"
         CFBundleVersion: "2"
+        CFBundleURLTypes:
+          - CFBundleURLName: com.photodash.app.authentication
+            CFBundleURLSchemes:
+              - com.photodash.app
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait

@@ -62,8 +62,7 @@ final class CameraManager: NSObject, ObservableObject {
     @Published var status: Status = .initializing
     @Published var plan: BracketPlan?
     @Published var focusLocked = false
-    @Published var selfTimerEnabled = false
-    @Published var countdown: Int?
+    @Published private(set) var isPreparingForCapture = false
     @Published var lastSavedAlbum: String?
     @Published var errorMessage: String?
     @Published var availableLenses: [Lens] = []
@@ -98,6 +97,7 @@ final class CameraManager: NSObject, ObservableObject {
     private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
     private var planTimer: Timer?
     private var isCapturing = false
+    private var preparation: CapturePreparation?
 
     private let inflightLock = NSLock()
     private var inflight: [Int64: CheckedContinuation<Data, Error>] = [:]
@@ -390,27 +390,50 @@ final class CameraManager: NSObject, ObservableObject {
     // MARK: - Capture trigger
 
     func triggerCapture() {
-        guard status == .ready, !isCapturing else { return }
-        Task { await runCaptureSequence() }
+        // Reserve the camera before starting any asynchronous work, so rapid
+        // screen/hardware taps cannot launch overlapping brackets.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.status == .ready, !self.isCapturing,
+                  UIApplication.shared.applicationState == .active else { return }
+            let preparation = self.preparation ?? CapturePreparation()
+            self.preparation = preparation
+            guard preparation.start(ready: { [weak self] in
+                guard let self else { return }
+                self.isPreparingForCapture = false
+                guard UIApplication.shared.applicationState == .active else {
+                    self.isCapturing = false
+                    self.status = .ready
+                    return
+                }
+                self.status = .capturing("Metering…")
+                Task { await self.runCaptureSequence() }
+            }) else { return }
+            self.isCapturing = true
+            self.isPreparingForCapture = true
+            self.status = .capturing("Hold it steady!")
+        }
+    }
+
+    func cancelCapturePreparation() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isPreparingForCapture else { return }
+            self.preparation?.cancel()
+            self.isPreparingForCapture = false
+            self.isCapturing = false
+            self.status = .ready
+        }
     }
 
     // MARK: - The 5-frame sequence
 
     private func runCaptureSequence() async {
-        guard let device, let limits else { return }
+        guard let device, let limits else {
+            isCapturing = false
+            await finishWithError("The camera is not ready. Please try again.")
+            return
+        }
         isCapturing = true
         defer { isCapturing = false }
-
-        // Optional 2 s self-timer so a screen tap can't shake the tripod.
-        if selfTimerEnabled {
-            for i in [2, 1] {
-                await MainActor.run { self.countdown = i }
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-            }
-            await MainActor.run { self.countdown = nil }
-        }
-
-        await MainActor.run { self.status = .capturing("Metering…") }
 
         // 0. Let focus/exposure/WB finish converging before we lock anything —
         //    locking mid-AF-hunt is how out-of-focus brackets happen.

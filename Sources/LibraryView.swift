@@ -80,12 +80,14 @@ struct LibraryView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var model = LibraryModel()
     @State private var showOrderSheet = false
-    @State private var confirmationText: String?
+    @State private var accountOnly = false
 
     private let columns = [GridItem(.adaptive(minimum: 110), spacing: 4)]
 
     var body: some View {
         NavigationStack {
+            VStack(spacing: 12) {
+                Text("Select photos for processing").font(.title2.bold()).multilineTextAlignment(.center).padding(.horizontal)
             Group {
                 if !model.loaded {
                     ProgressView().tint(.white)
@@ -97,13 +99,17 @@ struct LibraryView: View {
                     grid
                 }
             }
+            }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.black)
-            .navigationTitle("Library")
+            .navigationTitle("Photos")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Done") { dismiss() }
+                }
+                ToolbarItem(placement: .bottomBar) {
+                    Button("Your Homes and Account") { accountOnly = true; showOrderSheet = true }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(model.selected.count == model.stacks.count && !model.stacks.isEmpty
@@ -118,18 +124,7 @@ struct LibraryView: View {
         .preferredColorScheme(.dark)
         .task { await model.load() }
         .sheet(isPresented: $showOrderSheet) {
-            OrderSheet(stackCount: model.selected.count) { name in
-                placeOrder(named: name)
-            }
-            .presentationDetents([.medium])
-        }
-        .alert("Order placed", isPresented: .init(
-            get: { confirmationText != nil },
-            set: { if !$0 { confirmationText = nil } }
-        )) {
-            Button("OK") { confirmationText = nil }
-        } message: {
-            Text(confirmationText ?? "")
+            PhotoDashSubmissionView(stacks: accountOnly ? [] : model.stacks.filter { model.selected.contains($0.id) })
         }
     }
 
@@ -149,11 +144,10 @@ struct LibraryView: View {
     private var processBar: some View {
         VStack(spacing: 6) {
             Button {
+                accountOnly = false
                 showOrderSheet = true
             } label: {
-                Text(model.selected.isEmpty
-                     ? "Select stacks to process"
-                     : "Process \(model.selected.count) \(model.selected.count == 1 ? "stack" : "stacks") • $\(model.selected.count)")
+                Text("Next")
                     .font(.headline)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
@@ -163,26 +157,13 @@ struct LibraryView: View {
             }
             .disabled(model.selected.isEmpty)
 
-            Text("$1 per stack — pay at photodash.com when your photos are ready")
+            Text("Select complete stacks. Retrieve finished photos on the PhotoDash website.")
                 .font(.caption2)
                 .foregroundStyle(.white.opacity(0.6))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.black.opacity(0.9))
-    }
-
-    private func placeOrder(named name: String) {
-        let order = Order(id: UUID(),
-                          shootName: name,
-                          createdAt: Date(),
-                          stackAlbumIDs: Array(model.selected),
-                          pricePerStackUSD: 1,
-                          status: "placed")
-        try? OrderStore.append(order)
-        showOrderSheet = false
-        confirmationText = "\(order.stackAlbumIDs.count) \(order.stackAlbumIDs.count == 1 ? "stack" : "stacks") queued as “\(name)”. Uploading and delivery switch on once accounts go live — you'll pay at photodash.com when the processed photos are ready."
-        model.selected.removeAll()
     }
 
     private func message(_ text: String) -> some View {
@@ -270,64 +251,5 @@ private struct StackThumbnail: View {
                                               options: options) { img, _ in
             if let img { image = img }
         }
-    }
-}
-
-// MARK: - Order sheet
-
-private struct OrderSheet: View {
-    let stackCount: Int
-    let onPlace: (String) -> Void
-
-    @State private var shootName = ""
-    @Environment(\.dismiss) private var dismiss
-
-    private var trimmedName: String {
-        shootName.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    var body: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 20) {
-                Text("Name this shoot")
-                    .font(.headline)
-
-                TextField("e.g. 123 Main St", text: $shootName)
-                    .textFieldStyle(.roundedBorder)
-                    .autocorrectionDisabled()
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("\(stackCount) \(stackCount == 1 ? "stack" : "stacks") × $1 = $\(stackCount)")
-                        .font(.title3.bold())
-                    Text("Nothing to pay now. Your processed HDR photos will be ready at photodash.com — you pay there to download them.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                Button {
-                    onPlace(trimmedName)
-                } label: {
-                    Text("Place order")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(trimmedName.isEmpty ? Color.gray.opacity(0.4) : Color.blue)
-                        .foregroundStyle(.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
-                .disabled(trimmedName.isEmpty)
-            }
-            .padding(20)
-            .navigationTitle("Process photos")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") { dismiss() }
-                }
-            }
-        }
-        .preferredColorScheme(.dark)
     }
 }
