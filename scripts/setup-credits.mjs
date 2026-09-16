@@ -21,9 +21,11 @@ try {
   // by an outstanding Paid Apps agreement or unavailable price point.
   const endpoint = 'https://photodash.com/api/v1/credits/apple';
   await api(`/v1/apps/${app.id}`,'PATCH',{ data:{ type:'apps',id:app.id,attributes:{ subscriptionStatusUrl:endpoint,subscriptionStatusUrlVersion:'V2',subscriptionStatusUrlForSandbox:endpoint,subscriptionStatusUrlVersionForSandbox:'V2' } } });
-  const updated = (await api(`/v1/apps/${app.id}`)).data.attributes;
+  const updated = (await api(`/v1/apps/${app.id}?fields[apps]=subscriptionStatusUrl,subscriptionStatusUrlForSandbox,subscriptionStatusUrlVersion,subscriptionStatusUrlVersionForSandbox`)).data.attributes;
+  console.log(JSON.stringify({notificationSettings:updated}));
   if (updated.subscriptionStatusUrl !== endpoint || updated.subscriptionStatusUrlForSandbox !== endpoint) throw new Error('Apple notification URL verification failed.');
   console.log('Apple production and sandbox notification URLs updated to photodash.com.');
+  if (process.argv.includes('--notifications-only')) process.exit(0);
   const products = await api(`/v1/apps/${app.id}/inAppPurchasesV2?limit=200`);
   let product = products.data.find(p=>p.attributes.productId === 'com.photodash.app.credits10');
   if (!product) product = (await api('/v2/inAppPurchases','POST',{ data: { type:'inAppPurchases', attributes: { name:'PhotoDash 10 Photo Credits', productId:'com.photodash.app.credits10', inAppPurchaseType:'CONSUMABLE', reviewNote:'One credit pays for one bracket set to be professionally processed into one real-estate photo. Credits never expire. Sign in with PhotoDash, then select Buy credits on the submission screen.' }, relationships:{ app:rel('apps',app.id) } } })).data;
