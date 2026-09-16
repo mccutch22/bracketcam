@@ -7,6 +7,8 @@ struct ContentView: View {
     // and icons counter-rotate in place so they always read upright.
     @StateObject private var orientation = OrientationObserver()
     @State private var showLibrary = false
+    @State private var showCameraHelp = false
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         ZStack {
@@ -30,7 +32,14 @@ struct ContentView: View {
             UIApplication.shared.isIdleTimerDisabled = true
         }
         .onDisappear {
+            camera.cancelCapturePreparation()
             UIApplication.shared.isIdleTimerDisabled = false
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { camera.cancelCapturePreparation() }
+        }
+        .fullScreenCover(isPresented: $showCameraHelp) {
+            CameraHelpView()
         }
         .fullScreenCover(isPresented: $showLibrary) {
             LibraryView()
@@ -44,7 +53,9 @@ struct ContentView: View {
             CameraPreviewView(
                 session: camera.session,
                 onTap: { camera.focusAndMeter(at: $0) },
-                onHardwareShutter: { camera.triggerCapture() },
+                onHardwareShutter: {
+                    if !showLibrary && !showCameraHelp && scenePhase == .active { camera.triggerCapture() }
+                },
                 onPinchBegan: { camera.pinchBegan() },
                 onPinchChanged: { camera.pinchChanged($0) }
             )
@@ -58,7 +69,7 @@ struct ContentView: View {
             .padding(.horizontal, 12)
             .padding(.top, 8)
 
-            if isBusy, camera.countdown == nil {
+            if isBusy, !camera.isPreparingForCapture {
                 ZStack {
                     Color.black.opacity(0.35).ignoresSafeArea()
                     VStack(spacing: 14) {
@@ -81,9 +92,13 @@ struct ContentView: View {
                 }
             }
 
-            if let countdown = camera.countdown {
-                Text("\(countdown)")
-                    .font(.system(size: 120, weight: .bold, design: .rounded))
+            if camera.isPreparingForCapture {
+                Color.black.opacity(0.25).ignoresSafeArea()
+                Text("Hold it steady!")
+                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                    .multilineTextAlignment(.center)
+                    .padding(24)
+                    .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 18))
                     .foregroundStyle(.white)
                     .shadow(radius: 8)
                     .rotationEffect(orientation.angle)
@@ -131,13 +146,16 @@ struct ContentView: View {
 
             HStack {
                 Button {
-                    camera.selfTimerEnabled.toggle()
+                    showCameraHelp = true
                 } label: {
-                    Image(systemName: camera.selfTimerEnabled ? "timer.circle.fill" : "timer.circle")
+                    Image(systemName: "questionmark.circle")
                         .font(.system(size: 34))
-                        .foregroundStyle(camera.selfTimerEnabled ? .yellow : .white)
+                        .frame(width: 44, height: 44)
+                        .foregroundStyle(.white)
                         .rotationEffect(orientation.angle)
                 }
+                .accessibilityLabel("Photo tips")
+                .disabled(isBusy)
 
                 Spacer()
 
