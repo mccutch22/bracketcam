@@ -1,6 +1,11 @@
 name: Configure Apple Notifications
 on:
   workflow_dispatch: {}
+  push:
+    branches: [codex/photodash-mobile-connection]
+    paths:
+      - scripts/setup-credits.mjs
+      - .github/workflows/configure-notifications.yml
 jobs:
   configure:
     runs-on: ubuntu-latest
