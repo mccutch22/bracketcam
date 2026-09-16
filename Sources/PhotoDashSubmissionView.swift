@@ -140,19 +140,6 @@ struct PhotoDashSubmissionView: View {
                 if let home = model.chosenHome {
                     Section { Link("View photo gallery", destination: PhotoDashConfig.website(home.slug)) }
                 }
-                if !model.history.isEmpty {
-                    Section("Saved submissions") {
-                        ForEach(model.history.reversed()) { entry in
-                            Link(destination: PhotoDashConfig.website(entry.home.slug)) {
-                                VStack(alignment: .leading) {
-                                    Text(entry.home.street)
-                                    Text("\(entry.title) · \(entry.status)").font(.caption).foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                        Text("Open the website for the latest delivery status. Select the same stacks and home to continue an interrupted upload.").font(.caption)
-                    }
-                }
             }
             .navigationTitle(stacks.isEmpty ? "Your Homes and Account" : "Send to PhotoDash")
             .navigationBarTitleDisplayMode(.inline)
