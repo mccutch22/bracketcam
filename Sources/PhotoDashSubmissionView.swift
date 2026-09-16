@@ -137,9 +137,6 @@ struct PhotoDashSubmissionView: View {
                 if model.busy { Section { ProgressView(model.status.isEmpty ? "Connecting…" : model.status) } }
                 else if !model.status.isEmpty { Section { Text(model.status) } }
                 if let error = model.error { Section("Needs attention") { Text(error).foregroundStyle(.orange) } }
-                if let home = model.chosenHome {
-                    Section { Link("View photo gallery", destination: PhotoDashConfig.website(home.slug)) }
-                }
             }
             .navigationTitle(stacks.isEmpty ? "Your Homes and Account" : "Send to PhotoDash")
             .navigationBarTitleDisplayMode(.inline)
@@ -159,13 +156,15 @@ struct PhotoDashSubmissionView: View {
     }
 
     @ViewBuilder private func submissionSections(_ account: DashAccount) -> some View {
-        Section("Choose a home") {
+        Section {
             if !model.homes.isEmpty {
                 Picker("Home", selection: $model.chosenSlug) {
                     ForEach(model.homes) { home in Text("\(home.street), \(home.locality)").tag(home.slug) }
                 }.disabled(model.busy || model.finished)
             }
-            Button(showNewHome ? "Cancel new home" : "Create a new home") { showNewHome.toggle(); addressSearch.reset() }.disabled(model.busy || model.finished)
+            if let home = model.chosenHome {
+                Link("View photo gallery for this address", destination: PhotoDashConfig.website(home.slug))
+            }
             if showNewHome {
                 HomeAddressFields(search: addressSearch).disabled(model.busy)
                 Button("Save home") {
@@ -180,6 +179,20 @@ struct PhotoDashSubmissionView: View {
                     }
                 }.disabled(model.busy || addressSearch.loading || !addressSearch.address.isComplete)
             }
+        } header: {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Choose a home")
+                Spacer(minLength: 8)
+                Button(showNewHome ? "Cancel new home" : "+ Create a new home") {
+                    showNewHome.toggle()
+                    addressSearch.reset()
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.blue)
+                .padding(.vertical, 8)
+                .disabled(model.busy || model.finished)
+            }
+            .textCase(nil)
         }
         if !stacks.isEmpty { Section {
             Text("\(stacks.count) selected \(stacks.count == 1 ? "stack" : "stacks") · one finished photo per stack")
