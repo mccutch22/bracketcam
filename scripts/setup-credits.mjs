@@ -17,6 +17,13 @@ try {
   const apps = await api('/v1/apps?filter[bundleId]=com.photodash.app');
   const app = apps.data?.[0]; if (!app) throw new Error('PhotoDash App Store record not found');
   console.log(`PhotoDash Apple app ID: ${app.id}`);
+  // Domain changes must reach notifications even if catalog setup is blocked
+  // by an outstanding Paid Apps agreement or unavailable price point.
+  const endpoint = 'https://photodash.com/api/v1/credits/apple';
+  await api(`/v1/apps/${app.id}`,'PATCH',{ data:{ type:'apps',id:app.id,attributes:{ subscriptionStatusUrl:endpoint,subscriptionStatusUrlVersion:'V2',subscriptionStatusUrlForSandbox:endpoint,subscriptionStatusUrlVersionForSandbox:'V2' } } });
+  const updated = (await api(`/v1/apps/${app.id}`)).data.attributes;
+  if (updated.subscriptionStatusUrl !== endpoint || updated.subscriptionStatusUrlForSandbox !== endpoint) throw new Error('Apple notification URL verification failed.');
+  console.log('Apple production and sandbox notification URLs updated to photodash.com.');
   const products = await api(`/v1/apps/${app.id}/inAppPurchasesV2?limit=200`);
   let product = products.data.find(p=>p.attributes.productId === 'com.photodash.app.credits10');
   if (!product) product = (await api('/v2/inAppPurchases','POST',{ data: { type:'inAppPurchases', attributes: { name:'PhotoDash 10 Photo Credits', productId:'com.photodash.app.credits10', inAppPurchaseType:'CONSUMABLE', reviewNote:'One credit pays for one bracket set to be professionally processed into one real-estate photo. Credits never expire. Sign in with PhotoDash, then select Buy credits on the submission screen.' }, relationships:{ app:rel('apps',app.id) } } })).data;
@@ -32,7 +39,5 @@ try {
   const territories = await api('/v1/territories?limit=200');
   try { await api('/v1/inAppPurchaseAvailabilities','POST',{data:{type:'inAppPurchaseAvailabilities',attributes:{availableInNewTerritories:true},relationships:{inAppPurchase:rel('inAppPurchases',product.id),availableTerritories:{data:territories.data.map(t=>({type:'territories',id:t.id}))}}}}); }
   catch (e) { if (!e.message.includes('409')) throw e; console.log('Availability already exists; existing territories preserved.'); }
-  const endpoint = 'https://orangered-armadillo-437592.hostingersite.com/api/v1/credits/apple';
-  await api(`/v1/apps/${app.id}`,'PATCH',{ data:{ type:'apps',id:app.id,attributes:{ subscriptionStatusUrl:endpoint,subscriptionStatusUrlVersion:'V2',subscriptionStatusUrlForSandbox:endpoint,subscriptionStatusUrlVersionForSandbox:'V2' } } });
   console.log('Apple credit catalog and signed notification URLs configured. Paid Apps agreement, tax and banking must be active in App Store Connect before purchases work.');
 } catch (error) { console.error(error.message?.startsWith('Apple ') ? error.message : String(error.message).slice(0,300)); process.exitCode=1; }

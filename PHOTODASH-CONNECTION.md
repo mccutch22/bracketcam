@@ -8,7 +8,7 @@ The Library sends selected complete JPEG stacks to the same PhotoDash account an
 4. Tap the large Upload & process photos button. Keep the app open while uploading.
 5. Open View photo gallery. On the website, sign in with the same account if needed. Finished photos are added to the gallery automatically. Web bracket-upload tools are limited to superusers and authorized photographers.
 
-The current build targets the existing Hostinger temporary origin in PhotoDashConfig. Change that one public origin when the domain launches. No service secrets belong in the app.
+The current build targets https://photodash.com in PhotoDashConfig. Builds through 2.1 (13) target the retired Hostinger temporary domain and must be updated through TestFlight. The existing account, upload journal and Keychain session are retained. No service secrets belong in the app.
 
 ## Pilot limits
 
