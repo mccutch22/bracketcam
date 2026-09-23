@@ -1,13 +1,15 @@
 import SwiftUI
 import Photos
+import ImageIO
 
-/// One captured bracket stack = one album inside the "RE Brackets" folder.
+/// New stacks live privately in the app; legacy Photos albums remain readable.
 /// The stack is represented by its 0 EV frame (the middle of the ladder).
 struct StackItem: Identifiable {
     let id: String                 // album localIdentifier
     let title: String
     let date: Date?
     let representative: PHAsset?
+    let localRepresentative: URL?
     let frameCount: Int
 }
 
@@ -15,17 +17,25 @@ struct StackItem: Identifiable {
 final class LibraryModel: ObservableObject {
     @Published var stacks: [StackItem] = []
     @Published var selected: Set<String> = []
-    @Published var authDenied = false
+    @Published var canImportLegacy = false
+    @Published var loadError: String?
     @Published var loaded = false
 
     func load() async {
-        let auth = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
-        guard auth == .authorized else {
-            authDenied = true
-            loaded = true
-            return
-        }
-
+        var items: [StackItem] = []
+        loadError = nil
+        do {
+            let stored = try await Task.detached { try BracketStore.shared.all() }.value
+            items = stored.map { stack in
+                let files = BracketStore.shared.files(for: stack)
+                return StackItem(id: stack.id, title: stack.title, date: stack.date,
+                                 representative: nil, localRepresentative: files[files.count / 2], frameCount: files.count)
+            }
+        } catch { loadError = "Could not read saved stacks. Your files have not been removed. \(error.localizedDescription)" }
+        let auth = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        canImportLegacy = auth != .authorized
+        // Reading old albums is optional. Never request Photos access for new captures.
+        if auth == .authorized || auth == .limited {
         // The RE Brackets folder is the database: every child album is a stack.
         var folder: PHCollectionList?
         let lists = PHCollectionList.fetchCollectionLists(with: .folder,
@@ -38,7 +48,6 @@ final class LibraryModel: ObservableObject {
             }
         }
 
-        var items: [StackItem] = []
         if let folder {
             let children = PHCollection.fetchCollections(in: folder, options: nil)
             children.enumerateObjects { child, _, _ in
@@ -54,13 +63,20 @@ final class LibraryModel: ObservableObject {
                                        title: album.localizedTitle ?? "Bracket",
                                        date: rep.creationDate,
                                        representative: rep,
+                                       localRepresentative: nil,
                                        frameCount: assets.count))
             }
+        }
         }
         items.sort { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
         stacks = items
         selected = selected.intersection(Set(items.map(\.id)))
         loaded = true
+    }
+
+    func showOlderStacks() async {
+        _ = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
+        await load()
     }
 
     func toggle(_ id: String) {
@@ -88,11 +104,14 @@ struct LibraryView: View {
         NavigationStack {
             VStack(spacing: 12) {
                 Text("Select photos for processing").font(.title2.bold()).multilineTextAlignment(.center).padding(.horizontal)
+                if let error = model.loadError { Text(error).font(.caption).foregroundStyle(.orange).padding(.horizontal) }
+                if model.canImportLegacy {
+                    Button("Show older stacks from Photos") { Task { await model.showOlderStacks() } }.font(.caption)
+                }
             Group {
                 if !model.loaded {
                     ProgressView().tint(.white)
-                } else if model.authDenied {
-                    message("Photo Dash needs Full Photos access to show your stacks.\nAllow it in Settings → Privacy → Photos.")
+
                 } else if model.stacks.isEmpty {
                     message("No stacks yet.\nEvery bracket you shoot appears here as a single photo.")
                 } else {
@@ -190,7 +209,7 @@ private struct StackCell: View {
     var body: some View {
         VStack(spacing: 3) {
             ZStack(alignment: .topTrailing) {
-                StackThumbnail(asset: stack.representative)
+                StackThumbnail(asset: stack.representative, localURL: stack.localRepresentative)
                     .frame(minWidth: 0, maxWidth: .infinity)
                     .aspectRatio(4.0 / 3.0, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -218,6 +237,7 @@ private struct StackCell: View {
 
 private struct StackThumbnail: View {
     let asset: PHAsset?
+    let localURL: URL?
     @State private var image: UIImage?
 
     var body: some View {
@@ -240,7 +260,18 @@ private struct StackThumbnail: View {
     }
 
     private func request() {
-        guard image == nil, let asset else { return }
+        guard image == nil else { return }
+        if let localURL {
+            Task {
+                let thumbnail = await Task.detached {
+                    guard let source = CGImageSourceCreateWithURL(localURL as CFURL, nil) else { return nil as CGImage? }
+                    return CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: 400] as CFDictionary)
+                }.value
+                if let thumbnail { image = UIImage(cgImage: thumbnail) }
+            }
+            return
+        }
+        guard let asset else { return }
         let options = PHImageRequestOptions()
         options.deliveryMode = .opportunistic
         options.resizeMode = .fast

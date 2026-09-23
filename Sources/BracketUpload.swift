@@ -25,10 +25,18 @@ enum UploadJournal {
 
 enum BracketUpload {
     static func multipart(for entry: SavedUpload, progress: @escaping (String) async -> Void) async throws -> (file: URL, boundary: String, directory: URL) {
-        let album = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [entry.albumID], options: nil)
-        guard let collection = album.firstObject else { throw DashFailure(message: "This stack is no longer available in Photos. Restore it before retrying.") }
-        let assets = PHAsset.fetchAssets(in: collection, options: nil)
-        guard (2...7).contains(assets.count) else { throw DashFailure(message: "Each stack must contain 2–7 JPEG exposures of the same view.") }
+        let local = entry.albumID.hasPrefix("local-") ? try BracketStore.shared.stack(entry.albumID) : nil
+        let assets: PHFetchResult<PHAsset>?
+        if let local {
+            guard !local.isRaw else { throw DashFailure(message: "This stack contains RAW exposures. Capture a JPEG bracket set for processing.") }
+            assets = nil
+        } else {
+            let album = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [entry.albumID], options: nil)
+            guard let collection = album.firstObject else { throw DashFailure(message: "This older stack is no longer available in Photos. Restore it or allow Photos access before retrying.") }
+            assets = PHAsset.fetchAssets(in: collection, options: nil)
+        }
+        let count = local?.filenames.count ?? assets?.count ?? 0
+        guard (2...7).contains(count) else { throw DashFailure(message: "Each stack must contain 2–7 JPEG exposures of the same view.") }
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("photodash-upload-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         do {
@@ -42,18 +50,22 @@ enum BracketUpload {
             let label = entry.title.replacingOccurrences(of: "\r", with: " ").replacingOccurrences(of: "\n", with: " ")
             try text("--\(boundary)\r\nContent-Disposition: form-data; name=\"label\"\r\n\r\n\(label)\r\n")
             var total = 0
-            for index in 0..<assets.count {
+            for index in 0..<count {
                 try Task.checkCancellation()
-                await progress("Preparing exposure \(index + 1) of \(assets.count)…")
-                let resources = PHAssetResource.assetResources(for: assets.object(at: index))
-                guard let resource = resources.first(where: { $0.type == .photo && UTType($0.uniformTypeIdentifier)?.conforms(to: .jpeg) == true }) else {
-                    throw DashFailure(message: "This stack contains a non-JPEG exposure. Capture a new JPEG bracket set.")
-                }
+                await progress("Preparing exposure \(index + 1) of \(count)…")
                 let original = directory.appendingPathComponent("exposure-\(index + 1).jpg")
-                let options = PHAssetResourceRequestOptions(); options.isNetworkAccessAllowed = true
-                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                    PHAssetResourceManager.default().writeData(for: resource, toFile: original, options: options) { error in
-                        if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+                if let local {
+                    try FileManager.default.copyItem(at: BracketStore.shared.files(for: local)[index], to: original)
+                } else if let assets {
+                    let resources = PHAssetResource.assetResources(for: assets.object(at: index))
+                    guard let resource = resources.first(where: { $0.type == .photo && UTType($0.uniformTypeIdentifier)?.conforms(to: .jpeg) == true }) else {
+                        throw DashFailure(message: "This stack contains a non-JPEG exposure. Capture a new JPEG bracket set.")
+                    }
+                    let options = PHAssetResourceRequestOptions(); options.isNetworkAccessAllowed = true
+                    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                        PHAssetResourceManager.default().writeData(for: resource, toFile: original, options: options) { error in
+                            if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+                        }
                     }
                 }
                 let size = (try FileManager.default.attributesOfItem(atPath: original.path)[.size] as? NSNumber)?.intValue ?? 0

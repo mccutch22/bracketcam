@@ -279,7 +279,7 @@ struct ContentView: View {
         switch camera.status {
         case .initializing: return "Starting camera…"
         case .capturing(let step): return step
-        case .saving: return "Saving to Photos…"
+        case .saving: return "Saving in PhotoDash…"
         case .ready:
             let frameCount = camera.plan?.frames.count ?? 6
             return camera.focusLocked
@@ -294,7 +294,7 @@ struct ContentView: View {
     private var busyText: String {
         switch camera.status {
         case .capturing(let step): return step
-        case .saving: return "Saving to Photos…"
+        case .saving: return "Saving in PhotoDash…"
         default: return ""
         }
     }

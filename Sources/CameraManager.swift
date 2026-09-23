@@ -539,11 +539,11 @@ final class CameraManager: NSObject, ObservableObject {
 
         await restoreContinuousModes()
 
-        // 5. Save the set to its own album inside the "RE Brackets" folder.
+        // 5. Keep originals inside PhotoDash; never add raw brackets to Photos.
         await MainActor.run { self.status = .saving }
         let setName = "Bracket " + Self.setNameFormatter.string(from: Date())
         do {
-            try await PhotoLibrarySaver.save(imageDatas: images,
+            try BracketStore.shared.save(imageDatas: images,
                                              setName: setName,
                                              isRaw: useRaw)
             await MainActor.run {

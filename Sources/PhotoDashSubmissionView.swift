@@ -109,6 +109,7 @@ struct PhotoDashSubmissionView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showNewHome = false
     @State private var showCredits = false
+    @State private var galleryHome: DashHome?
     @ObservedObject private var credits = PhotoDashCredits.shared
     @AppStorage("photodash.pendingHomeRequestID") private var homeRequestID = UUID().uuidString.lowercased()
     @StateObject private var addressSearch = AddressSearchModel { fields in
@@ -124,7 +125,7 @@ struct PhotoDashSubmissionView: View {
                         Button("Buy credits") { showCredits = true }.disabled(model.busy)
                     }
                     if !account.processingAvailable && !stacks.isEmpty {
-                        Text("Camera processing is currently available to the PhotoDash pilot account. Your captured photos remain in Photos.")
+                        Text("Camera processing is currently available to the PhotoDash pilot account. Your captured photos remain safely in PhotoDash.")
                     } else {
                         submissionSections(account)
                     }
@@ -149,6 +150,7 @@ struct PhotoDashSubmissionView: View {
             .task { await model.load() }
             .interactiveDismissDisabled(model.busy)
             .sheet(isPresented: $showCredits) { PhotoDashCreditsView() }
+            .fullScreenCover(item: $galleryHome) { home in FinishedGalleryView(home: home) }
             .onDisappear { addressSearch.cancel() }
             .onChange(of: model.account?.user.id) { _, _ in addressSearch.reset(); showNewHome = false }
         }
@@ -163,7 +165,7 @@ struct PhotoDashSubmissionView: View {
                 }.disabled(model.busy || model.finished)
             }
             if let home = model.chosenHome {
-                Link("View photo gallery for this address", destination: PhotoDashConfig.website(home.slug))
+                Button("View photo gallery for this address") { galleryHome = home }
             }
             if showNewHome {
                 HomeAddressFields(search: addressSearch).disabled(model.busy)
@@ -204,7 +206,7 @@ struct PhotoDashSubmissionView: View {
             }
                 .buttonStyle(.borderedProminent).tint(.blue).controlSize(.large)
                 .disabled(model.busy || model.finished || model.chosenHome == nil || stacks.isEmpty || showNewHome)
-            Text("Keep the app open while uploading. Originals stay in your Photos library and private PhotoDash storage.").font(.caption).foregroundStyle(.secondary)
+            Text("Keep the app open while uploading. Originals stay in this app and are uploaded to private PhotoDash storage.").font(.caption).foregroundStyle(.secondary)
         } }
     }
 }
