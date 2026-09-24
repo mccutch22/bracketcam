@@ -125,7 +125,7 @@ struct LibraryView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Done") { dismiss() }
+                    Button("Back") { dismiss() }
                 }
                 ToolbarItem(placement: .bottomBar) {
                     Button("Your Homes and Account") { accountOnly = true; showOrderSheet = true }

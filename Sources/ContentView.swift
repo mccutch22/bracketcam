@@ -227,7 +227,7 @@ struct ContentView: View {
                             .padding(.vertical, 6)
                             .background(Color.white.opacity(camera.currentLens == lens ? 0.25 : 0.08))
                             .clipShape(Capsule())
-                            .rotationEffect(orientation.angle)
+                            .modifier(RotatingControl(angle: orientation.angle))
                     }
                     .disabled(isBusy)
                 }
@@ -235,7 +235,7 @@ struct ContentView: View {
                     Text(String(format: "%.1f× crop", camera.zoomFactor))
                         .font(.caption.bold())
                         .foregroundStyle(.yellow)
-                        .rotationEffect(orientation.angle)
+                        .modifier(RotatingControl(angle: orientation.angle))
                         .onTapGesture { camera.setZoom(1.0) }
                 }
                 Spacer()
@@ -253,7 +253,7 @@ struct ContentView: View {
                         .padding(.vertical, 6)
                         .background(Color.white.opacity(0.12))
                         .clipShape(Capsule())
-                        .rotationEffect(orientation.angle)
+                        .modifier(RotatingControl(angle: orientation.angle))
                 }
                 .disabled(isBusy)
                 // (The "A+0" Apple-fusion base frame experiment lived here;
@@ -263,9 +263,6 @@ struct ContentView: View {
             }
         }
         .padding(.horizontal, 12)
-        // Rotated capsules are taller than the rows — give them room so they
-        // don't collide with each other or the shutter row in landscape.
-        .padding(.vertical, orientation.isLandscape ? 12 : 0)
     }
 
     private var isBusy: Bool {
@@ -324,5 +321,40 @@ struct ContentView: View {
             .buttonStyle(.borderedProminent)
         }
         .foregroundStyle(.white)
+    }
+}
+
+// Rotation alone does not change SwiftUI's layout bounds. Reserve the visible
+// bounds so adjacent controls stay apart, including during the rotation animation.
+private struct RotatingControl: ViewModifier {
+    let angle: Angle
+
+    func body(content: Content) -> some View {
+        RotatedControlLayout(radians: angle.radians) {
+            content.fixedSize().rotationEffect(angle)
+        }
+    }
+}
+
+private struct RotatedControlLayout: Layout {
+    var radians: Double
+
+    var animatableData: Double {
+        get { radians }
+        set { radians = newValue }
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let control = subviews.first else { return .zero }
+        let size = control.sizeThatFits(.unspecified)
+        let cosine = abs(cos(radians))
+        let sine = abs(sin(radians))
+        return CGSize(width: size.width * cosine + size.height * sine,
+                      height: size.width * sine + size.height * cosine)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: CGPoint(x: bounds.midX, y: bounds.midY),
+                              anchor: .center, proposal: .unspecified)
     }
 }
