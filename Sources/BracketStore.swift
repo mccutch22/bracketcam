@@ -56,6 +56,23 @@ struct BracketStore {
         stack.filenames.map { root.appendingPathComponent(stack.id, isDirectory: true).appendingPathComponent($0) }
     }
 
+    func diagnostics(for stack: StoredBracket) -> Data? {
+        let url = root.appendingPathComponent(stack.id).appendingPathComponent("capture-diagnostics.json")
+        guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              size <= 256 * 1024 else { return nil }
+        return try? Data(contentsOf: url)
+    }
+
+    func saveDiagnostics(_ data: Data, for bracket: StoredBracket) throws {
+        let validated = try stack(bracket.id)
+        guard data.count <= 256 * 1024 else { throw CocoaError(.fileWriteInvalidFileName) }
+        var options: Data.WritingOptions = .atomic
+        #if os(iOS)
+        options.insert(.completeFileProtectionUntilFirstUserAuthentication)
+        #endif
+        try data.write(to: root.appendingPathComponent(validated.id).appendingPathComponent("capture-diagnostics.json"), options: options)
+    }
+
     func all() throws -> [StoredBracket] {
         guard FileManager.default.fileExists(atPath: root.path) else { return [] }
         return try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)

@@ -100,7 +100,7 @@ final class CameraManager: NSObject, ObservableObject {
     private var preparation: CapturePreparation?
 
     private let inflightLock = NSLock()
-    private var inflight: [Int64: CheckedContinuation<Data, Error>] = [:]
+    private var inflight: [Int64: CheckedContinuation<CapturedPhoto, Error>] = [:]
 
     private static let setNameFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -465,6 +465,7 @@ final class CameraManager: NSObject, ObservableObject {
 
         // 3. Fire the ladder, darkest to brightest.
         var images: [Data] = []
+        var diagnosticFrames: [FrameDiagnostic] = []
         let total = capturePlan.frames.count
         for (index, frame) in capturePlan.frames.enumerated() {
             await MainActor.run {
@@ -491,6 +492,8 @@ final class CameraManager: NSObject, ObservableObject {
             let baseStatus = "Frame \(index + 1)/\(total)  (\(frame.label) EV) — "
                 + "\(shutterString(actualShutter)) ISO \(Int(actualISO))"
 
+            var captureSamples: [CaptureSample] = []
+            var usedRetry = false
             do {
                 if frame.stackCount > 1 {
                     // Burst of identical exposures, mean-stacked into one
@@ -502,8 +505,9 @@ final class CameraManager: NSObject, ObservableObject {
                             self.status = .capturing(
                                 baseStatus + " • stack \(shot + 1)/\(frame.stackCount)")
                         }
-                        burst.append(try await capturePhoto(raw: false,
-                                                            prioritization: .speed))
+                        let capture = try await capturePhoto(raw: false, prioritization: .speed)
+                        burst.append(capture.data)
+                        captureSamples.append(capture.diagnostic)
                     }
                     await MainActor.run {
                         self.status = .capturing(
@@ -516,8 +520,9 @@ final class CameraManager: NSObject, ObservableObject {
                             + (useRaw ? " • RAW"
                                : (prioritization == .quality ? " • HQ" : " • fast")))
                     }
-                    images.append(try await capturePhoto(raw: useRaw,
-                                                         prioritization: prioritization))
+                    let capture = try await capturePhoto(raw: useRaw, prioritization: prioritization)
+                    images.append(capture.data)
+                    captureSamples.append(capture.diagnostic)
                 }
             } catch {
                 // One fast-mode, single-shot retry so a stubborn frame can't
@@ -527,13 +532,23 @@ final class CameraManager: NSObject, ObservableObject {
                         "Frame \(index + 1)/\(total) — retrying (fast mode)")
                 }
                 do {
-                    images.append(try await capturePhoto(raw: useRaw,
-                                                         prioritization: .speed))
+                    usedRetry = true
+                    captureSamples = []
+                    let capture = try await capturePhoto(raw: useRaw, prioritization: .speed)
+                    images.append(capture.data)
+                    captureSamples.append(capture.diagnostic)
                 } catch {
                     await restoreContinuousModes()
                     await finishWithError("Capture failed: \(error.localizedDescription)")
                     return
                 }
+            }
+            if let data = images.last {
+                diagnosticFrames.append(FrameDiagnostic(index: index + 1,
+                    requestedSeconds: frame.duration, requestedISO: Double(frame.iso),
+                    deviceSeconds: actualShutter, deviceISO: Double(actualISO),
+                    plannedStackCount: frame.stackCount, usedRetry: usedRetry,
+                    captures: captureSamples, beforeSave: ImageMetadataSnapshot.file(data)))
             }
         }
 
@@ -543,9 +558,13 @@ final class CameraManager: NSObject, ObservableObject {
         await MainActor.run { self.status = .saving }
         let setName = "Bracket " + Self.setNameFormatter.string(from: Date())
         do {
-            try BracketStore.shared.save(imageDatas: images,
-                                             setName: setName,
-                                             isRaw: useRaw)
+            let bracket = try BracketStore.shared.save(imageDatas: images, setName: setName, isRaw: useRaw)
+            CaptureDiagnosticReport(
+                appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
+                appBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
+                osVersion: UIDevice.current.systemVersion,
+                mode: handheld ? "handheld" : "tripod", lens: currentLens.rawValue,
+                frames: diagnosticFrames).save(for: bracket, in: .shared)
             await MainActor.run {
                 self.lastSavedAlbum = setName
                 self.status = .ready
@@ -653,7 +672,7 @@ final class CameraManager: NSObject, ObservableObject {
     private func capturePhoto(
         raw: Bool,
         prioritization: AVCapturePhotoOutput.QualityPrioritization = .quality
-    ) async throws -> Data {
+    ) async throws -> CapturedPhoto {
         try await withCheckedThrowingContinuation { cont in
             sessionQueue.async { [self] in
                 let settings: AVCapturePhotoSettings
@@ -737,10 +756,15 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
 
         if let error {
             cont?.resume(throwing: error)
-        } else if let data = photo.fileDataRepresentation() {
-            cont?.resume(returning: data)
-        } else {
-            cont?.resume(throwing: CameraError.noImageData)
+        } else if let cont {
+            // Snapshot live metadata BEFORE requesting the encoded file.
+            let live = ImageMetadataSnapshot.metadata(photo.metadata)
+            guard let data = photo.fileDataRepresentation() else {
+                cont.resume(throwing: CameraError.noImageData)
+                return
+            }
+            let diagnostic = CaptureSample(live: live, encoded: ImageMetadataSnapshot.file(data))
+            cont.resume(returning: CapturedPhoto(data: data, diagnostic: diagnostic))
         }
     }
 }

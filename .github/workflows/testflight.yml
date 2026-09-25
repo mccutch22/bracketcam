@@ -55,6 +55,11 @@ jobs:
           swiftc -parse-as-library Sources/BracketStore.swift Tests/BracketStoreChecks.swift -o "$RUNNER_TEMP/bracket-store-checks"
           "$RUNNER_TEMP/bracket-store-checks"
 
+      - name: Check capture diagnostics
+        run: |
+          swiftc -parse-as-library Sources/BracketStore.swift Sources/CaptureDiagnostics.swift Tests/CaptureDiagnosticsChecks.swift -o "$RUNNER_TEMP/capture-diagnostics-checks"
+          "$RUNNER_TEMP/capture-diagnostics-checks"
+
       - name: Generate Xcode project
         run: xcodegen generate
 

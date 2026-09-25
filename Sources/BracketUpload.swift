@@ -49,6 +49,11 @@ enum BracketUpload {
             try text("--\(boundary)\r\nContent-Disposition: form-data; name=\"requestId\"\r\n\r\n\(entry.id)\r\n")
             let label = entry.title.replacingOccurrences(of: "\r", with: " ").replacingOccurrences(of: "\n", with: " ")
             try text("--\(boundary)\r\nContent-Disposition: form-data; name=\"label\"\r\n\r\n\(label)\r\n")
+            if let local, let diagnostics = BracketStore.shared.diagnostics(for: local) {
+                try text("--\(boundary)\r\nContent-Disposition: form-data; name=\"captureDiagnostics\"\r\nContent-Type: application/json\r\n\r\n")
+                try output.write(contentsOf: diagnostics)
+                try text("\r\n")
+            }
             var total = 0
             for index in 0..<count {
                 try Task.checkCancellation()
