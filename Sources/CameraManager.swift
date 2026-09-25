@@ -62,8 +62,7 @@ final class CameraManager: NSObject, ObservableObject {
     @Published var status: Status = .initializing
     @Published var plan: BracketPlan?
     @Published var focusLocked = false
-    @Published var selfTimerEnabled = false
-    @Published var countdown: Int?
+    @Published private(set) var isPreparingForCapture = false
     @Published var lastSavedAlbum: String?
     @Published var errorMessage: String?
     @Published var availableLenses: [Lens] = []
@@ -98,9 +97,10 @@ final class CameraManager: NSObject, ObservableObject {
     private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
     private var planTimer: Timer?
     private var isCapturing = false
+    private var preparation: CapturePreparation?
 
     private let inflightLock = NSLock()
-    private var inflight: [Int64: CheckedContinuation<Data, Error>] = [:]
+    private var inflight: [Int64: CheckedContinuation<CapturedPhoto, Error>] = [:]
 
     private static let setNameFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -390,27 +390,50 @@ final class CameraManager: NSObject, ObservableObject {
     // MARK: - Capture trigger
 
     func triggerCapture() {
-        guard status == .ready, !isCapturing else { return }
-        Task { await runCaptureSequence() }
+        // Reserve the camera before starting any asynchronous work, so rapid
+        // screen/hardware taps cannot launch overlapping brackets.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.status == .ready, !self.isCapturing,
+                  UIApplication.shared.applicationState == .active else { return }
+            let preparation = self.preparation ?? CapturePreparation()
+            self.preparation = preparation
+            guard preparation.start(ready: { [weak self] in
+                guard let self else { return }
+                self.isPreparingForCapture = false
+                guard UIApplication.shared.applicationState == .active else {
+                    self.isCapturing = false
+                    self.status = .ready
+                    return
+                }
+                self.status = .capturing("Metering…")
+                Task { await self.runCaptureSequence() }
+            }) else { return }
+            self.isCapturing = true
+            self.isPreparingForCapture = true
+            self.status = .capturing("Hold it steady!")
+        }
+    }
+
+    func cancelCapturePreparation() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isPreparingForCapture else { return }
+            self.preparation?.cancel()
+            self.isPreparingForCapture = false
+            self.isCapturing = false
+            self.status = .ready
+        }
     }
 
     // MARK: - The 5-frame sequence
 
     private func runCaptureSequence() async {
-        guard let device, let limits else { return }
+        guard let device, let limits else {
+            isCapturing = false
+            await finishWithError("The camera is not ready. Please try again.")
+            return
+        }
         isCapturing = true
         defer { isCapturing = false }
-
-        // Optional 2 s self-timer so a screen tap can't shake the tripod.
-        if selfTimerEnabled {
-            for i in [2, 1] {
-                await MainActor.run { self.countdown = i }
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-            }
-            await MainActor.run { self.countdown = nil }
-        }
-
-        await MainActor.run { self.status = .capturing("Metering…") }
 
         // 0. Let focus/exposure/WB finish converging before we lock anything —
         //    locking mid-AF-hunt is how out-of-focus brackets happen.
@@ -442,6 +465,7 @@ final class CameraManager: NSObject, ObservableObject {
 
         // 3. Fire the ladder, darkest to brightest.
         var images: [Data] = []
+        var diagnosticFrames: [FrameDiagnostic] = []
         let total = capturePlan.frames.count
         for (index, frame) in capturePlan.frames.enumerated() {
             await MainActor.run {
@@ -468,6 +492,8 @@ final class CameraManager: NSObject, ObservableObject {
             let baseStatus = "Frame \(index + 1)/\(total)  (\(frame.label) EV) — "
                 + "\(shutterString(actualShutter)) ISO \(Int(actualISO))"
 
+            var captureSamples: [CaptureSample] = []
+            var usedRetry = false
             do {
                 if frame.stackCount > 1 {
                     // Burst of identical exposures, mean-stacked into one
@@ -479,8 +505,9 @@ final class CameraManager: NSObject, ObservableObject {
                             self.status = .capturing(
                                 baseStatus + " • stack \(shot + 1)/\(frame.stackCount)")
                         }
-                        burst.append(try await capturePhoto(raw: false,
-                                                            prioritization: .speed))
+                        let capture = try await capturePhoto(raw: false, prioritization: .speed)
+                        burst.append(capture.data)
+                        captureSamples.append(capture.diagnostic)
                     }
                     await MainActor.run {
                         self.status = .capturing(
@@ -493,8 +520,9 @@ final class CameraManager: NSObject, ObservableObject {
                             + (useRaw ? " • RAW"
                                : (prioritization == .quality ? " • HQ" : " • fast")))
                     }
-                    images.append(try await capturePhoto(raw: useRaw,
-                                                         prioritization: prioritization))
+                    let capture = try await capturePhoto(raw: useRaw, prioritization: prioritization)
+                    images.append(capture.data)
+                    captureSamples.append(capture.diagnostic)
                 }
             } catch {
                 // One fast-mode, single-shot retry so a stubborn frame can't
@@ -504,25 +532,39 @@ final class CameraManager: NSObject, ObservableObject {
                         "Frame \(index + 1)/\(total) — retrying (fast mode)")
                 }
                 do {
-                    images.append(try await capturePhoto(raw: useRaw,
-                                                         prioritization: .speed))
+                    usedRetry = true
+                    captureSamples = []
+                    let capture = try await capturePhoto(raw: useRaw, prioritization: .speed)
+                    images.append(capture.data)
+                    captureSamples.append(capture.diagnostic)
                 } catch {
                     await restoreContinuousModes()
                     await finishWithError("Capture failed: \(error.localizedDescription)")
                     return
                 }
             }
+            if let data = images.last {
+                diagnosticFrames.append(FrameDiagnostic(index: index + 1,
+                    requestedSeconds: frame.duration, requestedISO: Double(frame.iso),
+                    deviceSeconds: actualShutter, deviceISO: Double(actualISO),
+                    plannedStackCount: frame.stackCount, usedRetry: usedRetry,
+                    captures: captureSamples, beforeSave: ImageMetadataSnapshot.file(data)))
+            }
         }
 
         await restoreContinuousModes()
 
-        // 5. Save the set to its own album inside the "RE Brackets" folder.
+        // 5. Keep originals inside PhotoDash; never add raw brackets to Photos.
         await MainActor.run { self.status = .saving }
         let setName = "Bracket " + Self.setNameFormatter.string(from: Date())
         do {
-            try await PhotoLibrarySaver.save(imageDatas: images,
-                                             setName: setName,
-                                             isRaw: useRaw)
+            let bracket = try BracketStore.shared.save(imageDatas: images, setName: setName, isRaw: useRaw)
+            CaptureDiagnosticReport(
+                appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
+                appBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
+                osVersion: UIDevice.current.systemVersion,
+                mode: handheld ? "handheld" : "tripod", lens: currentLens.rawValue,
+                frames: diagnosticFrames).save(for: bracket, in: .shared)
             await MainActor.run {
                 self.lastSavedAlbum = setName
                 self.status = .ready
@@ -630,7 +672,7 @@ final class CameraManager: NSObject, ObservableObject {
     private func capturePhoto(
         raw: Bool,
         prioritization: AVCapturePhotoOutput.QualityPrioritization = .quality
-    ) async throws -> Data {
+    ) async throws -> CapturedPhoto {
         try await withCheckedThrowingContinuation { cont in
             sessionQueue.async { [self] in
                 let settings: AVCapturePhotoSettings
@@ -714,10 +756,15 @@ extension CameraManager: AVCapturePhotoCaptureDelegate {
 
         if let error {
             cont?.resume(throwing: error)
-        } else if let data = photo.fileDataRepresentation() {
-            cont?.resume(returning: data)
-        } else {
-            cont?.resume(throwing: CameraError.noImageData)
+        } else if let cont {
+            // Snapshot live metadata BEFORE requesting the encoded file.
+            let live = ImageMetadataSnapshot.metadata(photo.metadata)
+            guard let data = photo.fileDataRepresentation() else {
+                cont.resume(throwing: CameraError.noImageData)
+                return
+            }
+            let diagnostic = CaptureSample(live: live, encoded: ImageMetadataSnapshot.file(data))
+            cont.resume(returning: CapturedPhoto(data: data, diagnostic: diagnostic))
         }
     }
 }

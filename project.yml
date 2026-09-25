@@ -18,8 +18,12 @@ targets:
       path: Sources/Info.plist
       properties:
         CFBundleDisplayName: PhotoDash
-        CFBundleShortVersionString: "2.0"
+        CFBundleShortVersionString: "2.1"
         CFBundleVersion: "2"
+        CFBundleURLTypes:
+          - CFBundleURLName: com.photodash.app.authentication
+            CFBundleURLSchemes:
+              - com.photodash.app
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
@@ -28,8 +32,8 @@ targets:
         ITSAppUsesNonExemptEncryption: false
         CFBundleIconName: AppIcon
         NSCameraUsageDescription: Photo Dash uses the camera to shoot HDR exposure brackets.
-        NSPhotoLibraryUsageDescription: Photo Dash saves each bracket set to its own album and shows your stacks in the library for ordering.
-        NSPhotoLibraryAddUsageDescription: Photo Dash saves captured brackets to your photo library.
+        NSPhotoLibraryUsageDescription: PhotoDash can show older bracket stacks previously saved in Photos. New captures stay inside the app.
+        NSPhotoLibraryAddUsageDescription: PhotoDash saves finished photos to your camera roll when you tap Download.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.photodash.app

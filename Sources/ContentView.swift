@@ -7,6 +7,8 @@ struct ContentView: View {
     // and icons counter-rotate in place so they always read upright.
     @StateObject private var orientation = OrientationObserver()
     @State private var showLibrary = false
+    @State private var showCameraHelp = false
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         ZStack {
@@ -30,7 +32,14 @@ struct ContentView: View {
             UIApplication.shared.isIdleTimerDisabled = true
         }
         .onDisappear {
+            camera.cancelCapturePreparation()
             UIApplication.shared.isIdleTimerDisabled = false
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { camera.cancelCapturePreparation() }
+        }
+        .fullScreenCover(isPresented: $showCameraHelp) {
+            CameraHelpView()
         }
         .fullScreenCover(isPresented: $showLibrary) {
             LibraryView()
@@ -44,7 +53,9 @@ struct ContentView: View {
             CameraPreviewView(
                 session: camera.session,
                 onTap: { camera.focusAndMeter(at: $0) },
-                onHardwareShutter: { camera.triggerCapture() },
+                onHardwareShutter: {
+                    if !showLibrary && !showCameraHelp && scenePhase == .active { camera.triggerCapture() }
+                },
                 onPinchBegan: { camera.pinchBegan() },
                 onPinchChanged: { camera.pinchChanged($0) }
             )
@@ -58,7 +69,7 @@ struct ContentView: View {
             .padding(.horizontal, 12)
             .padding(.top, 8)
 
-            if isBusy, camera.countdown == nil {
+            if isBusy, !camera.isPreparingForCapture {
                 ZStack {
                     Color.black.opacity(0.35).ignoresSafeArea()
                     VStack(spacing: 14) {
@@ -81,9 +92,13 @@ struct ContentView: View {
                 }
             }
 
-            if let countdown = camera.countdown {
-                Text("\(countdown)")
-                    .font(.system(size: 120, weight: .bold, design: .rounded))
+            if camera.isPreparingForCapture {
+                Color.black.opacity(0.25).ignoresSafeArea()
+                Text("Hold it steady!")
+                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                    .multilineTextAlignment(.center)
+                    .padding(24)
+                    .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 18))
                     .foregroundStyle(.white)
                     .shadow(radius: 8)
                     .rotationEffect(orientation.angle)
@@ -131,13 +146,16 @@ struct ContentView: View {
 
             HStack {
                 Button {
-                    camera.selfTimerEnabled.toggle()
+                    showCameraHelp = true
                 } label: {
-                    Image(systemName: camera.selfTimerEnabled ? "timer.circle.fill" : "timer.circle")
+                    Image(systemName: "questionmark.circle")
                         .font(.system(size: 34))
-                        .foregroundStyle(camera.selfTimerEnabled ? .yellow : .white)
+                        .frame(width: 44, height: 44)
+                        .foregroundStyle(.white)
                         .rotationEffect(orientation.angle)
                 }
+                .accessibilityLabel("Photo tips")
+                .disabled(isBusy)
 
                 Spacer()
 
@@ -209,7 +227,7 @@ struct ContentView: View {
                             .padding(.vertical, 6)
                             .background(Color.white.opacity(camera.currentLens == lens ? 0.25 : 0.08))
                             .clipShape(Capsule())
-                            .rotationEffect(orientation.angle)
+                            .modifier(RotatingControl(angle: orientation.angle))
                     }
                     .disabled(isBusy)
                 }
@@ -217,7 +235,7 @@ struct ContentView: View {
                     Text(String(format: "%.1f× crop", camera.zoomFactor))
                         .font(.caption.bold())
                         .foregroundStyle(.yellow)
-                        .rotationEffect(orientation.angle)
+                        .modifier(RotatingControl(angle: orientation.angle))
                         .onTapGesture { camera.setZoom(1.0) }
                 }
                 Spacer()
@@ -235,7 +253,7 @@ struct ContentView: View {
                         .padding(.vertical, 6)
                         .background(Color.white.opacity(0.12))
                         .clipShape(Capsule())
-                        .rotationEffect(orientation.angle)
+                        .modifier(RotatingControl(angle: orientation.angle))
                 }
                 .disabled(isBusy)
                 // (The "A+0" Apple-fusion base frame experiment lived here;
@@ -245,9 +263,6 @@ struct ContentView: View {
             }
         }
         .padding(.horizontal, 12)
-        // Rotated capsules are taller than the rows — give them room so they
-        // don't collide with each other or the shutter row in landscape.
-        .padding(.vertical, orientation.isLandscape ? 12 : 0)
     }
 
     private var isBusy: Bool {
@@ -261,7 +276,7 @@ struct ContentView: View {
         switch camera.status {
         case .initializing: return "Starting camera…"
         case .capturing(let step): return step
-        case .saving: return "Saving to Photos…"
+        case .saving: return "Saving in PhotoDash…"
         case .ready:
             let frameCount = camera.plan?.frames.count ?? 6
             return camera.focusLocked
@@ -276,7 +291,7 @@ struct ContentView: View {
     private var busyText: String {
         switch camera.status {
         case .capturing(let step): return step
-        case .saving: return "Saving to Photos…"
+        case .saving: return "Saving in PhotoDash…"
         default: return ""
         }
     }
@@ -306,5 +321,40 @@ struct ContentView: View {
             .buttonStyle(.borderedProminent)
         }
         .foregroundStyle(.white)
+    }
+}
+
+// Rotation alone does not change SwiftUI's layout bounds. Reserve the visible
+// bounds so adjacent controls stay apart, including during the rotation animation.
+private struct RotatingControl: ViewModifier {
+    let angle: Angle
+
+    func body(content: Content) -> some View {
+        RotatedControlLayout(radians: angle.radians) {
+            content.fixedSize().rotationEffect(angle)
+        }
+    }
+}
+
+private struct RotatedControlLayout: Layout {
+    var radians: Double
+
+    var animatableData: Double {
+        get { radians }
+        set { radians = newValue }
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let control = subviews.first else { return .zero }
+        let size = control.sizeThatFits(.unspecified)
+        let cosine = abs(cos(radians))
+        let sine = abs(sin(radians))
+        return CGSize(width: size.width * cosine + size.height * sine,
+                      height: size.width * sine + size.height * cosine)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: CGPoint(x: bounds.midX, y: bounds.midY),
+                              anchor: .center, proposal: .unspecified)
     }
 }

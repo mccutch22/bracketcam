@@ -16,6 +16,14 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
+      - name: Configure PhotoDash credit product
+        continue-on-error: true
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: node scripts/setup-credits.mjs
+
       # App Store Connect rejects uploads built with older SDKs — pick the
       # newest Xcode 26.x on the runner (the default is older).
       - name: Select Xcode 26
@@ -31,6 +39,26 @@ jobs:
 
       - name: Install XcodeGen
         run: brew install xcodegen
+
+      - name: Check shutter preparation timing
+        run: |
+          swiftc -parse-as-library Sources/CapturePreparation.swift Tests/CapturePreparationChecks.swift -o "$RUNNER_TEMP/capture-preparation-checks"
+          "$RUNNER_TEMP/capture-preparation-checks"
+
+      - name: Check address search
+        run: |
+          swiftc -parse-as-library Sources/AddressSearchModel.swift Tests/AddressSearchChecks.swift -o "$RUNNER_TEMP/address-search-checks"
+          "$RUNNER_TEMP/address-search-checks"
+
+      - name: Check private bracket storage
+        run: |
+          swiftc -parse-as-library Sources/BracketStore.swift Tests/BracketStoreChecks.swift -o "$RUNNER_TEMP/bracket-store-checks"
+          "$RUNNER_TEMP/bracket-store-checks"
+
+      - name: Check capture diagnostics
+        run: |
+          swiftc -parse-as-library Sources/BracketStore.swift Sources/CaptureDiagnostics.swift Tests/CaptureDiagnosticsChecks.swift -o "$RUNNER_TEMP/capture-diagnostics-checks"
+          "$RUNNER_TEMP/capture-diagnostics-checks"
 
       - name: Generate Xcode project
         run: xcodegen generate
