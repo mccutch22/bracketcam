@@ -93,20 +93,34 @@ private struct GalleryWebView: UIViewRepresentable {
         web.navigationDelegate = context.coordinator
         web.uiDelegate = context.coordinator
         web.allowsBackForwardNavigationGestures = true
-        var request = URLRequest(url: PhotoDashConfig.origin.appendingPathComponent("api/v1/mobile/web-session"))
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let token = DashKeychain.read() { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        request.httpBody = try? JSONEncoder().encode(["slug": home.slug])
-        web.load(request)
+        context.coordinator.connect(web, home: home)
         return web
     }
     func updateUIView(_ web: WKWebView, context: Context) {}
+    static func dismantleUIView(_ web: WKWebView, coordinator: Coordinator) {
+        coordinator.connection?.cancel(); web.stopLoading()
+    }
 
     @MainActor final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         let state: GalleryDownloadState
+        var connection: Task<Void, Never>?
         var files: [ObjectIdentifier: URL] = [:]
         init(state: GalleryDownloadState) { self.state = state }
+        func connect(_ web: WKWebView, home: DashHome) {
+            connection = Task {
+                do {
+                    let cookies = try await PhotoDashAPI().galleryCookies(home.slug)
+                    for cookie in cookies { await web.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) }
+                    guard !Task.isCancelled else { return }
+                    web.load(URLRequest(url: PhotoDashConfig.website(home.slug)))
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    state.loadingPage = false; state.pageFailed = true
+                    state.needsReconnect = DashKeychain.read() == nil
+                    state.failure = error.localizedDescription
+                }
+            }
+        }
         private func isOurs(_ url: URL?) -> Bool {
             guard let url else { return false }
             return url.scheme == "https" && url.host == PhotoDashConfig.origin.host && (url.port == nil || url.port == 443)

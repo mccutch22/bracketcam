@@ -79,6 +79,28 @@ final class PhotoDashAPI {
         try validate(data, response)
         DashKeychain.clear()
     }
+    // Establish the website session through the same transport as other native
+    // API calls, then hand only its HttpOnly cookie to the isolated web view.
+    // The bearer token is never sent through browser navigation or redirects.
+    func galleryCookies(_ slug: String) async throws -> [HTTPCookie] {
+        var req = makeRequest("web-session", method: "POST", token: DashKeychain.read())
+        req.timeoutInterval = 30
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONEncoder().encode(["slug": slug])
+        let (data, response) = try await session.data(for: req)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 303 else {
+            try validate(data, response)
+            throw DashFailure(message: "PhotoDash returned an unexpected gallery response. Please try again.")
+        }
+        guard http.value(forHTTPHeaderField: "Location") == PhotoDashConfig.website(slug).absoluteString,
+              let header = http.value(forHTTPHeaderField: "Set-Cookie") else {
+            throw DashFailure(message: "PhotoDash could not connect your gallery session. Please reconnect.")
+        }
+        let cookies = HTTPCookie.cookies(withResponseHeaderFields: ["Set-Cookie": header], for: PhotoDashConfig.origin)
+            .filter { $0.name == "hma_session" && $0.isHTTPOnly && $0.isSecure && $0.domain.trimmingCharacters(in: CharacterSet(charactersIn: ".")) == PhotoDashConfig.origin.host }
+        guard !cookies.isEmpty else { throw DashFailure(message: "PhotoDash could not save the gallery sign-in. Please reconnect.") }
+        return cookies
+    }
     private func makeRequest(_ path: String, method: String, token: String?) -> URLRequest {
         var req = URLRequest(url: PhotoDashConfig.origin.appendingPathComponent("api/v1/mobile/" + path))
         req.httpMethod = method
