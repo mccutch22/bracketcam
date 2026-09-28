@@ -55,6 +55,11 @@ jobs:
           swiftc -parse-as-library Sources/BracketStore.swift Tests/BracketStoreChecks.swift -o "$RUNNER_TEMP/bracket-store-checks"
           "$RUNNER_TEMP/bracket-store-checks"
 
+      - name: Check processing provider journal compatibility
+        run: |
+          swiftc -parse-as-library Sources/SavedUpload.swift Tests/SavedUploadChecks.swift -o "$RUNNER_TEMP/saved-upload-checks"
+          "$RUNNER_TEMP/saved-upload-checks"
+
       - name: Check capture diagnostics
         run: |
           swiftc -parse-as-library Sources/BracketStore.swift Sources/CaptureDiagnostics.swift Tests/CaptureDiagnosticsChecks.swift -o "$RUNNER_TEMP/capture-diagnostics-checks"

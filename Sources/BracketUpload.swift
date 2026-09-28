@@ -2,15 +2,6 @@ import Foundation
 import Photos
 import UniformTypeIdentifiers
 
-struct SavedUpload: Codable, Identifiable {
-    let id: String
-    let userID: String
-    let albumID: String
-    let home: DashHome
-    let title: String
-    var status: String
-}
-
 enum UploadJournal {
     private static var url: URL { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("photodash-uploads.json") }
     static func load() throws -> [SavedUpload] {
