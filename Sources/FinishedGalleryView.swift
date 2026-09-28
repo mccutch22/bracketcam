@@ -9,6 +9,9 @@ final class GalleryDownloadState: ObservableObject {
     @Published var failure: String?
     @Published var share: DownloadFile?
     @Published var fallback: URL?
+    @Published var needsReconnect = false
+    @Published var pageFailed = false
+    @Published var loadingPage = true
     var temporaryDirectories: [URL] = []
     deinit { for directory in temporaryDirectories { try? FileManager.default.removeItem(at: directory) } }
 }
@@ -16,12 +19,27 @@ struct DownloadFile: Identifiable { let id = UUID(); let url: URL }
 
 struct FinishedGalleryView: View {
     let home: DashHome
+    let onReconnect: () -> Void
     @Environment(\.dismiss) private var dismiss
     @StateObject private var state = GalleryDownloadState()
+    @State private var pageID = UUID()
+    private func reload() {
+        state.failure = nil; state.needsReconnect = false; state.pageFailed = false
+        state.loadingPage = true; pageID = UUID()
+    }
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                GalleryWebView(home: home, state: state)
+                if state.loadingPage { ProgressView("Opening PhotoDash.com…").padding() }
+                GalleryWebView(home: home, state: state).id(pageID)
+                if state.pageFailed || state.needsReconnect {
+                    VStack(spacing: 12) {
+                        Text(state.needsReconnect ? "Sign in again to reconnect this app to PhotoDash.com. Your saved photo stacks will stay in the app." : "The gallery could not open. Try again, or reconnect using your PhotoDash account.")
+                            .font(.callout).multilineTextAlignment(.center)
+                        Button("Try again") { reload() }.buttonStyle(.bordered)
+                        Button("Reconnect to PhotoDash.com", action: onReconnect).buttonStyle(.borderedProminent)
+                    }.padding()
+                }
                 if !state.message.isEmpty {
                     HStack { if state.busy { ProgressView() }; Text(state.message).font(.footnote) }.padding(10)
                 }
@@ -32,11 +50,21 @@ struct FinishedGalleryView: View {
             .navigationTitle(home.street).navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { Button("Done") { dismiss() }.disabled(state.busy) }
-                ToolbarItem(placement: .topBarTrailing) { Link(destination: PhotoDashConfig.website(home.slug)) { Image(systemName: "safari") }.accessibilityLabel("Open in Safari") }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button("Reload gallery") { reload() }
+                        Button("Reconnect to PhotoDash.com", action: onReconnect)
+                        Link("Open in Safari", destination: PhotoDashConfig.website(home.slug))
+                    } label: { Image(systemName: "ellipsis.circle") }.accessibilityLabel("Gallery options").disabled(state.busy)
+                }
             }
             .alert("PhotoDash", isPresented: Binding(get: { state.failure != nil }, set: { if !$0 { state.failure = nil } })) {
                 Button("OK", role: .cancel) { state.failure = nil }
-                Button("Settings") { if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) } }
+                if state.needsReconnect || state.pageFailed {
+                    Button("Reconnect", action: onReconnect)
+                } else if state.fallback != nil {
+                    Button("Settings") { if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) } }
+                }
             } message: { Text(state.failure ?? "") }
             .sheet(item: $state.share) { file in DownloadShareSheet(url: file.url) }
         }
@@ -84,6 +112,10 @@ private struct GalleryWebView: UIViewRepresentable {
             return url.scheme == "https" && url.host == PhotoDashConfig.origin.host && (url.port == nil || url.port == 443)
         }
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            if action.targetFrame?.isMainFrame != false, isOurs(action.request.url), action.request.url?.path == "/signin" {
+                state.loadingPage = false; state.needsReconnect = true
+                decisionHandler(.cancel); return
+            }
             if action.shouldPerformDownload {
                 guard action.sourceFrame.isMainFrame, isOurs(action.sourceFrame.request.url), isOurs(action.request.url), !state.busy else { decisionHandler(.cancel); return }
                 state.busy = true; state.message = "Downloading…"; state.fallback = nil
@@ -98,8 +130,9 @@ private struct GalleryWebView: UIViewRepresentable {
         }
         func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
             if response.isForMainFrame, let http = response.response as? HTTPURLResponse, http.statusCode >= 400 {
-                state.busy = false; state.message = ""
-                state.failure = http.statusCode == 401 ? "Sign in again in PhotoDash, then reopen this gallery." : "This page could not load. Please try again."
+                state.busy = false; state.message = ""; state.loadingPage = false; state.pageFailed = true
+                state.needsReconnect = http.statusCode == 401
+                state.failure = http.statusCode == 401 ? "Your connection to PhotoDash expired. Tap Reconnect and sign in with your PhotoDash account." : http.statusCode == 403 ? "This account cannot open this gallery, or the request was blocked. You can reconnect with the account that owns this home." : "This page could not load (\(http.statusCode)). Please try again."
                 decisionHandler(.cancel); return
             }
             if !response.canShowMIMEType && response.isForMainFrame && isOurs(response.response.url) {
@@ -144,8 +177,12 @@ private struct GalleryWebView: UIViewRepresentable {
         }
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { navigationFailed(error) }
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { navigationFailed(error) }
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { state.loadingPage = false }
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            state.loadingPage = false; state.pageFailed = true
+        }
         private func navigationFailed(_ error: Error) {
-            if (error as NSError).code != NSURLErrorCancelled { state.busy = false; state.failure = "Could not connect to PhotoDash. Check your connection and reopen the gallery." }
+            if (error as NSError).code != NSURLErrorCancelled { state.busy = false; state.loadingPage = false; state.pageFailed = true; state.failure = "Could not connect to PhotoDash. Check your connection and try again." }
         }
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
             if let url = action.request.url {

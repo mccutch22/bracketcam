@@ -111,6 +111,7 @@ struct PhotoDashSubmissionView: View {
     @State private var showNewHome = false
     @State private var showCredits = false
     @State private var galleryHome: DashHome?
+    @State private var reconnectAfterGallery = false
     @ObservedObject private var credits = PhotoDashCredits.shared
     @AppStorage("photodash.pendingHomeRequestID") private var homeRequestID = UUID().uuidString.lowercased()
     @StateObject private var addressSearch = AddressSearchModel { fields in
@@ -132,7 +133,7 @@ struct PhotoDashSubmissionView: View {
                     }
                 } else {
                     Section {
-                        Text("Sign in with the same Google account you use on the PhotoDash website.")
+                        Text("Sign in with the same account you use on PhotoDash.com. Your saved photo stacks stay in this app.")
                         Button("Sign in to PhotoDash") { Task { await model.signIn() } }.disabled(model.busy)
                     }
                 }
@@ -145,13 +146,24 @@ struct PhotoDashSubmissionView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { Button("Back") { dismiss() }.disabled(model.busy) }
                 ToolbarItem(placement: .topBarTrailing) {
-                    if model.account != nil { Menu { Button("Sign out", role: .destructive) { Task { await model.signOut() } } } label: { Image(systemName: "person.crop.circle") }.accessibilityLabel("Account").disabled(model.busy) }
+                    if let account = model.account { Menu {
+                        Text(account.user.email)
+                        Button("Reconnect to PhotoDash.com") { Task { await model.signIn() } }
+                        Button("Sign out", role: .destructive) { Task { await model.signOut() } }
+                    } label: { Image(systemName: "person.crop.circle") }.accessibilityLabel("Account").disabled(model.busy) }
                 }
             }
             .task { await model.load() }
             .interactiveDismissDisabled(model.busy)
             .sheet(isPresented: $showCredits) { PhotoDashCreditsView() }
-            .fullScreenCover(item: $galleryHome) { home in FinishedGalleryView(home: home) }
+            .fullScreenCover(item: $galleryHome, onDismiss: {
+                if reconnectAfterGallery {
+                    reconnectAfterGallery = false
+                    Task { await model.signIn() }
+                } else { Task { await model.load() } }
+            }) { home in
+                FinishedGalleryView(home: home) { reconnectAfterGallery = true; galleryHome = nil }
+            }
             .onDisappear { addressSearch.cancel() }
             .onChange(of: model.account?.user.id) { _, _ in addressSearch.reset(); showNewHome = false }
         }
@@ -160,13 +172,19 @@ struct PhotoDashSubmissionView: View {
 
     @ViewBuilder private func submissionSections(_ account: DashAccount) -> some View {
         Section {
-            if !model.homes.isEmpty {
+            if !showNewHome && !model.homes.isEmpty {
                 Picker("Home", selection: $model.chosenSlug) {
                     ForEach(model.homes) { home in Text("\(home.street), \(home.locality)").tag(home.slug) }
                 }.disabled(model.busy || model.finished)
             }
-            if let home = model.chosenHome {
-                Button("View photo gallery for this address") { galleryHome = home }
+            if !showNewHome, let home = model.chosenHome {
+                Button { galleryHome = home } label: {
+                    Text("View photo gallery for this address on PhotoDash.com")
+                        .font(.headline).multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity).padding(.vertical, 8)
+                }
+                .buttonStyle(.borderedProminent).tint(.blue).controlSize(.large)
+                .disabled(model.busy)
             }
             if showNewHome {
                 HomeAddressFields(search: addressSearch).disabled(model.busy)
@@ -184,7 +202,7 @@ struct PhotoDashSubmissionView: View {
             }
         } header: {
             HStack(alignment: .firstTextBaseline) {
-                Text("Choose a home")
+                Text(showNewHome ? "Create a new home" : "Choose a home")
                 Spacer(minLength: 8)
                 Button(showNewHome ? "Cancel new home" : "+ Create a new home") {
                     showNewHome.toggle()
