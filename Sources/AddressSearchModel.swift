@@ -7,12 +7,13 @@ struct HomeAddress: Decodable, Equatable {
     var state = ""
     var postalCode = ""
 
+    var canCreate: Bool { !street.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var isComplete: Bool {
         [street, city, state, postalCode].allSatisfy {
             !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
-    var display: String { "\(street), \(city), \(state) \(postalCode)" }
+    var display: String { [street, city, [state, postalCode].filter { !$0.isEmpty }.joined(separator: " ")].filter { !$0.isEmpty }.joined(separator: ", ") }
     var fields: [String: String] {
         ["street": street, "city": city, "state": state, "postalCode": postalCode]
     }

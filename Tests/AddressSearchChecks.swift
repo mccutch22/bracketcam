@@ -2,6 +2,10 @@ import Foundation
 
 @main struct AddressSearchChecks {
     @MainActor static func main() async {
+        let streetOnly = HomeAddress(street: "123 Main St")
+        precondition(streetOnly.canCreate && !streetOnly.isComplete)
+        precondition(streetOnly.display == "123 Main St")
+        precondition(!HomeAddress(street: "  ").canCreate)
         var calls: [[String: String]] = []
         let complete = HomeAddress(street: "123 Main St", city: "Columbus", state: "OH", postalCode: "43215")
         let model = AddressSearchModel(debounce: 1_000_000) { fields in

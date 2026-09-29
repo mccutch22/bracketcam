@@ -6,9 +6,10 @@ struct HomeAddressFields: View {
     var body: some View {
         if search.manual {
             TextField("Street address / unit", text: $search.address.street).textContentType(.streetAddressLine1)
-            TextField("City", text: $search.address.city).textContentType(.addressCity)
-            TextField("State", text: $search.address.state).textContentType(.addressState)
-            TextField("ZIP code", text: $search.address.postalCode).textContentType(.postalCode).keyboardType(.numbersAndPunctuation)
+            Text("Only the street address is required.").font(.caption).foregroundStyle(.secondary)
+            TextField("City (optional)", text: $search.address.city).textContentType(.addressCity)
+            TextField("State (optional)", text: $search.address.state).textContentType(.addressState)
+            TextField("ZIP code (optional)", text: $search.address.postalCode).textContentType(.postalCode).keyboardType(.numbersAndPunctuation)
             Button("Use address search") { search.reset() }
         } else {
             TextField("Search home address", text: Binding(get: { search.query }, set: { search.updateQuery($0) }))

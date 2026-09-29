@@ -47,28 +47,28 @@ final class SubmissionModel: ObservableObject {
             try await loadAccount(); chosenSlug = reply.home.slug
         } catch { show(error) }
     }
-    func submit(_ stacks: [StackItem], provider: String = "esoft") async {
+    func submit(_ stacks: [StackItem]) async {
         guard !busy, let account, let home = chosenHome else { return }
-        guard provider == "gpt" ? account.gptProcessingAvailable == true : account.processingAvailable else { return }
+        guard account.processingAvailable else { return }
         busy = true; error = nil; finished = false
         UIApplication.shared.isIdleTimerDisabled = true
         defer { busy = false; UIApplication.shared.isIdleTimerDisabled = false }
         do {
             var journal = try UploadJournal.load()
-            for stack in stacks where !journal.contains(where: { $0.userID == account.user.id && $0.albumID == stack.id && $0.home.id == home.id && $0.processingProvider == provider }) {
-                journal.append(SavedUpload(id: UUID().uuidString.lowercased(), userID: account.user.id, albumID: stack.id, home: home, title: stack.title, status: "pending", provider: provider))
+            for stack in stacks where !journal.contains(where: { $0.userID == account.user.id && $0.albumID == stack.id && $0.home.id == home.id }) {
+                journal.append(SavedUpload(id: UUID().uuidString.lowercased(), userID: account.user.id, albumID: stack.id, home: home, title: stack.title, status: "pending", provider: "auto"))
             }
             // Persist IDs before the first network request; retries reuse the same IDs.
             try UploadJournal.save(journal)
             let remote: JobsReply = try await api.request("homes/\(home.slug)/brackets")
             let remaining = stacks.filter { stack in
-                guard let saved = journal.first(where: { $0.userID == account.user.id && $0.albumID == stack.id && $0.home.id == home.id && $0.processingProvider == provider }), let job = remote.jobs.first(where: { $0.id == saved.id }) else { return true }
+                guard let saved = journal.first(where: { $0.userID == account.user.id && $0.albumID == stack.id && $0.home.id == home.id }), let job = remote.jobs.first(where: { $0.id == saved.id }) else { return true }
                 return (job.status == "ready" || job.canRetry == true) && job.creditReserved != true
             }.count
             let balance: DashWallet = try await api.request("credits")
-            guard provider == "gpt" || balance.balance >= remaining else { throw DashFailure(message: "You need \(remaining) credits and have \(balance.balance). Tap Buy credits, then return here to send your saved selection.") }
+            guard account.processingCreditExempt == true || balance.balance >= remaining else { throw DashFailure(message: "You need \(remaining) credits and have \(balance.balance). Tap Buy credits, then return here to send your saved selection.") }
             for (number, stack) in stacks.enumerated() {
-                guard let index = journal.firstIndex(where: { $0.userID == account.user.id && $0.albumID == stack.id && $0.home.id == home.id && $0.processingProvider == provider }) else { continue }
+                guard let index = journal.firstIndex(where: { $0.userID == account.user.id && $0.albumID == stack.id && $0.home.id == home.id }) else { continue }
                 let entry = journal[index]
                 status = "Stack \(number + 1) of \(stacks.count): checking saved progress…"
                 var job = remote.jobs.first { $0.id == entry.id }
@@ -83,7 +83,7 @@ final class SubmissionModel: ObservableObject {
                 guard var saved = job else { throw DashFailure(message: "Could not confirm this upload. Retry to check its saved status.") }
                 if saved.status == "ready" || saved.canRetry == true {
                     status = "Sending stack \(number + 1) of \(stacks.count) for editing…"
-                    let reply: JobReply = try await api.request("homes/\(home.slug)/brackets/\(entry.id)", method: "POST", body: ["action": "process", "provider": provider])
+                    let reply: JobReply = try await api.request("homes/\(home.slug)/brackets/\(entry.id)", method: "POST", body: ["action": "process"])
                     saved = reply.job
                 }
                 journal[index].status = saved.status
@@ -126,7 +126,7 @@ struct PhotoDashSubmissionView: View {
                         Text("\(credits.wallet?.balance ?? account.credits?.balance ?? 0) credits available")
                         Button("Buy credits") { showCredits = true }.disabled(model.busy)
                     }
-                    if !account.processingAvailable && account.gptProcessingAvailable != true && !stacks.isEmpty {
+                    if !account.processingAvailable && !stacks.isEmpty {
                         Text("Camera processing is currently available to the PhotoDash pilot account. Your captured photos remain safely in PhotoDash.")
                     } else {
                         submissionSections(account)
@@ -137,7 +137,17 @@ struct PhotoDashSubmissionView: View {
                         Button("Sign in to PhotoDash") { Task { await model.signIn() } }.disabled(model.busy)
                     }
                 }
-                if model.busy { Section { ProgressView(model.status.isEmpty ? "Connecting…" : model.status) } }
+                if model.busy {
+                    if model.status.localizedCaseInsensitiveContains("stack") {
+                        Section {
+                            ProgressView(model.status).tint(.white).foregroundStyle(.white)
+                                .font(.headline).padding(.vertical, 10)
+                                .accessibilityLiveRegion(.assertive)
+                        }.listRowBackground(Color(red: 0.65, green: 0.06, blue: 0.06))
+                    } else {
+                        Section { ProgressView(model.status.isEmpty ? "Connecting…" : model.status) }
+                    }
+                }
                 else if !model.status.isEmpty { Section { Text(model.status) } }
                 if let error = model.error { Section("Needs attention") { Text(error).foregroundStyle(.orange) } }
             }
@@ -198,7 +208,7 @@ struct PhotoDashSubmissionView: View {
                         await model.createHome(fields)
                         if model.error == nil { showNewHome = false; homeRequestID = UUID().uuidString.lowercased(); addressSearch.reset() }
                     }
-                }.disabled(model.busy || addressSearch.loading || !addressSearch.address.isComplete)
+                }.disabled(model.busy || addressSearch.loading || !addressSearch.address.canCreate)
             }
         } header: {
             HStack(alignment: .firstTextBaseline) {
@@ -217,22 +227,14 @@ struct PhotoDashSubmissionView: View {
         }
         if !stacks.isEmpty { Section {
             Text("\(stacks.count) selected \(stacks.count == 1 ? "stack" : "stacks") · one finished photo per stack")
-            Text("Costs 1 credit per photo sent for processing. Previously submitted photos are not charged again.").font(.caption).foregroundStyle(.secondary)
-            if credits.wallet?.mode == "test" { Text("Test credits · Esoft development processing").font(.caption).foregroundStyle(.orange) }
+            Text(account.processingCreditExempt == true ? "Superuser processing · no photo credits." : "Costs 1 credit per photo sent for processing. Previously submitted photos are not charged again.").font(.caption).foregroundStyle(.secondary)
+            if credits.wallet?.mode == "test" { Text("Test credits").font(.caption).foregroundStyle(.orange) }
             Button { Task { await model.submit(stacks) } } label: {
                 Text(model.finished ? "Sent to PhotoDash" : model.busy ? "Uploading…" : "Upload & process photos")
                     .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 14)
             }
                 .buttonStyle(.borderedProminent).tint(.blue).controlSize(.large)
                 .disabled(!account.processingAvailable || model.busy || model.finished || model.chosenHome == nil || stacks.isEmpty || showNewHome)
-            if account.gptProcessingAvailable == true {
-                Button { Task { await model.submit(stacks, provider: "gpt") } } label: {
-                    Text("Process GPT").font(.headline).frame(maxWidth: .infinity).padding(.vertical, 14)
-                }
-                .buttonStyle(.bordered).tint(.purple).controlSize(.large)
-                .disabled(model.busy || model.chosenHome == nil || stacks.isEmpty || showNewHome)
-                Text("Superuser option · no photo credits. Combines the exposures, checks against the middle original, and repairs any detected differences before delivery.").font(.caption).foregroundStyle(.secondary)
-            }
             Text("Keep the app open while uploading. Originals stay in this app and are uploaded to private PhotoDash storage.").font(.caption).foregroundStyle(.secondary)
         } }
     }
