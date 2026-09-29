@@ -142,7 +142,7 @@ struct PhotoDashSubmissionView: View {
                         Section {
                             ProgressView(model.status).tint(.white).foregroundStyle(.white)
                                 .font(.headline).padding(.vertical, 10)
-                                .accessibilityLiveRegion(.assertive)
+                                .accessibilityLabel(model.status)
                         }.listRowBackground(Color(red: 0.65, green: 0.06, blue: 0.06))
                     } else {
                         Section { ProgressView(model.status.isEmpty ? "Connecting…" : model.status) }
