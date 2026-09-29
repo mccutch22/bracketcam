@@ -8,9 +8,22 @@ struct ContentView: View {
     @StateObject private var orientation = OrientationObserver()
     @State private var showLibrary = false
     @State private var showCameraHelp = false
+    @State private var showWelcomeTutorial = TutorialOnboarding.shouldPresent()
+    @State private var cameraStarted = false
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
+        Group {
+            if showWelcomeTutorial {
+                CameraTutorialView(firstLaunch: true, onWatched: { TutorialOnboarding.finish() }) {
+                    TutorialOnboarding.finish()
+                    showWelcomeTutorial = false
+                }
+            } else { cameraContent }
+        }
+    }
+
+    private var cameraContent: some View {
         ZStack {
             Color.black.ignoresSafeArea()
 
@@ -27,7 +40,7 @@ struct ContentView: View {
             }
         }
         .onAppear {
-            camera.start()
+            if !cameraStarted { cameraStarted = true; camera.start() }
             camera.rawEnabled = false   // JPG only for now (orders are JPG)
             UIApplication.shared.isIdleTimerDisabled = true
         }

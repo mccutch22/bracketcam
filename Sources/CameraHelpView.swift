@@ -4,6 +4,7 @@ struct CameraHelpView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var orientation = OrientationObserver()
     @State private var step = 0
+    @State private var showVideo = false
 
     private let descriptions = [
         "Clean your lens. Phone lenses are often dirty. Wipe them before shooting.",
@@ -34,6 +35,17 @@ struct CameraHelpView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .accessibilityLabel(descriptions[step])
                     .id(step)
+                    .contentShape(Rectangle())
+                    .gesture(DragGesture(minimumDistance: 30).onEnded { value in
+                        withAnimation { step = TutorialOnboarding.swipedStep(step, horizontal: value.translation.width, vertical: value.translation.height) }
+                    })
+                    .accessibilityAction(named: Text("Next tip")) { step = min(step + 1, 3) }
+                    .accessibilityAction(named: Text("Previous tip")) { step = max(step - 1, 0) }
+                Button { showVideo = true } label: {
+                    Label("View video tutorial", systemImage: "play.circle.fill")
+                        .font(.headline).frame(maxWidth: .infinity, minHeight: 44)
+                }.buttonStyle(.bordered)
+                Text("Swipe right for next tip · swipe left to go back").font(.caption).foregroundStyle(.secondary)
                 HStack(spacing: 16) {
                     if step > 0 {
                         Button("Back") { step -= 1 }
@@ -57,5 +69,8 @@ struct CameraHelpView: View {
         .background(Color.white.ignoresSafeArea())
         .foregroundStyle(Color(red: 0.02, green: 0.08, blue: 0.18))
         .preferredColorScheme(.light)
+        .fullScreenCover(isPresented: $showVideo) {
+            CameraTutorialView { showVideo = false }
+        }
     }
 }

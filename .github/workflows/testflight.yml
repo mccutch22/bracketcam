@@ -60,6 +60,13 @@ jobs:
           swiftc -parse-as-library Sources/SavedUpload.swift Tests/SavedUploadChecks.swift -o "$RUNNER_TEMP/saved-upload-checks"
           "$RUNNER_TEMP/saved-upload-checks"
 
+      - name: Check tutorial onboarding and bundled video
+        run: |
+          swiftc -parse-as-library Sources/TutorialOnboarding.swift Tests/TutorialOnboardingChecks.swift -o "$RUNNER_TEMP/tutorial-checks"
+          "$RUNNER_TEMP/tutorial-checks"
+          test -s Sources/Resources/CameraTutorial.mp4
+          test -s Sources/Assets.xcassets/TutorialPoster.imageset/tutorial.jpg
+
       - name: Check capture diagnostics
         run: |
           swiftc -parse-as-library Sources/BracketStore.swift Sources/CaptureDiagnostics.swift Tests/CaptureDiagnosticsChecks.swift -o "$RUNNER_TEMP/capture-diagnostics-checks"
@@ -101,6 +108,9 @@ jobs:
             CODE_SIGN_IDENTITY="Apple Distribution" \
             DEVELOPMENT_TEAM="$TEAM_ID" \
             | tail -80
+
+      - name: Verify tutorial is in the archived app
+        run: test -s "$RUNNER_TEMP/PhotoDash.xcarchive/Products/Applications/BracketCam.app/CameraTutorial.mp4"
 
       - name: Write export options
         env:
