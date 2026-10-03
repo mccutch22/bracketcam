@@ -1,91 +1,27 @@
 import Photos
+import ImageIO
 import UniformTypeIdentifiers
 
-/// Saves each 5-shot set as its own album ("Bracket yyyy-MM-dd HH.mm.ss")
-/// inside a top-level "RE Brackets" folder, so every set is identifiable.
+/// Only explicit downloads of finished images are added to Apple Photos.
 enum PhotoLibrarySaver {
+    static let folderName = "RE Brackets" // Read-only compatibility with earlier builds.
 
-    static let folderName = "RE Brackets"
-
-    enum SaveError: LocalizedError {
-        case notAuthorized
-        case folderCreationFailed
-
-        var errorDescription: String? {
-            switch self {
-            case .notAuthorized:
-                return "Photos access denied. Allow Full Access in Settings > Privacy > Photos."
-            case .folderCreationFailed:
-                return "Could not create the RE Brackets folder in Photos."
-            }
+    static func saveFinishedPhoto(at url: URL) async throws {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              CGImageSourceGetCount(source) > 0,
+              let type = CGImageSourceGetType(source),
+              UTType(type as String)?.conforms(to: .image) == true else {
+            throw DashFailure(message: "This download is not a photo. Use Share to save the file instead.")
         }
-    }
-
-    static func save(imageDatas: [Data], setName: String, isRaw: Bool) async throws {
-        let auth = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
-        guard auth == .authorized else { throw SaveError.notAuthorized }
-
-        let folder = try await findOrCreateFolder()
-
-        let ext = isRaw ? "dng" : "jpg"
-        let baseName = setName
-            .replacingOccurrences(of: " ", with: "_")
-            .replacingOccurrences(of: ".", with: "-")
-
+        let auth = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+        guard auth == .authorized || auth == .limited else {
+            throw DashFailure(message: "To save finished photos, allow PhotoDash to add photos in Settings. You can also use Share to save this download.")
+        }
         try await PHPhotoLibrary.shared().performChanges {
-            guard let folderRequest = PHCollectionListChangeRequest(for: folder) else { return }
-
-            let albumRequest = PHAssetCollectionChangeRequest
-                .creationRequestForAssetCollection(withTitle: setName)
-
-            var placeholders: [PHObjectPlaceholder] = []
-            for (index, data) in imageDatas.enumerated() {
-                let assetRequest = PHAssetCreationRequest.forAsset()
-                let options = PHAssetResourceCreationOptions()
-                // Real filenames (Bracket_..._1of6.dng) so Lightroom and
-                // desktop workflows sort and group sets sensibly.
-                options.originalFilename =
-                    "\(baseName)_\(index + 1)of\(imageDatas.count).\(ext)"
-                if let ut = UTType(filenameExtension: ext) {
-                    options.uniformTypeIdentifier = ut.identifier
-                }
-                assetRequest.addResource(with: .photo, data: data, options: options)
-                if let placeholder = assetRequest.placeholderForCreatedAsset {
-                    placeholders.append(placeholder)
-                }
-            }
-            albumRequest.addAssets(placeholders as NSArray)
-            folderRequest.addChildCollections(
-                [albumRequest.placeholderForCreatedAssetCollection] as NSArray
-            )
+            let options = PHAssetResourceCreationOptions()
+            options.originalFilename = url.lastPathComponent
+            options.uniformTypeIdentifier = type as String
+            PHAssetCreationRequest.forAsset().addResource(with: .photo, fileURL: url, options: options)
         }
-    }
-
-    private static func findOrCreateFolder() async throws -> PHCollectionList {
-        let existing = PHCollectionList.fetchCollectionLists(with: .folder,
-                                                             subtype: .regularFolder,
-                                                             options: nil)
-        var found: PHCollectionList?
-        existing.enumerateObjects { list, _, stop in
-            if list.localizedTitle == folderName {
-                found = list
-                stop.pointee = true
-            }
-        }
-        if let found { return found }
-
-        var placeholderID: String?
-        try await PHPhotoLibrary.shared().performChanges {
-            let request = PHCollectionListChangeRequest
-                .creationRequestForCollectionList(withTitle: folderName)
-            placeholderID = request.placeholderForCreatedCollectionList.localIdentifier
-        }
-        guard let placeholderID,
-              let list = PHCollectionList
-                  .fetchCollectionLists(withLocalIdentifiers: [placeholderID], options: nil)
-                  .firstObject else {
-            throw SaveError.folderCreationFailed
-        }
-        return list
     }
 }
