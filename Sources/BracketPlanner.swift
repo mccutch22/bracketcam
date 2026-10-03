@@ -33,15 +33,16 @@ enum Tuning {
     /// tile-warped handheld composites are internally non-rigid, which broke
     /// alignment at Esoft and two other editors — sharp single frames at
     /// high ISO are what handheld DSLR brackets feed them every day, and
-    /// those align fine). Shorter settle keeps the whole 6-frame ladder to a
+    /// those align fine). Shorter settle keeps the whole handheld ladder to a
     /// few seconds, which also minimizes pose drift between frames.
     static let handheldFrameMaxExposure: Double = 1.0 / 60.0
     static let handheldSettleSeconds: Double = 0.2
 
     /// The fixed exposure ladder, in EV relative to the scene meter, darkest
     /// first. -6 stands in for highlight protection: deep enough that window
-    /// highlights survive in any realistic interior. Tripod only.
-    static let ladderEVs: [Int] = [-6, -4, -2, 0, 2, 4]
+    /// highlights survive in any realistic interior. Tripod only. Omit the
+    /// former +4 frame so every new stack fits Hybrid/Ideogram's five inputs.
+    static let ladderEVs: [Int] = [-6, -4, -2, 0, 2]
 
     /// Handheld ladder: 4 frames at 3-stop spacing. Same window insurance
     /// (-6) and near-same total range; merge software handles 3-stop-spaced
@@ -65,7 +66,7 @@ struct DeviceExposureLimits {
 
 /// One planned frame of the bracket.
 struct FramePlan: Identifiable {
-    let label: String            // "-6" … "+4"
+    let label: String            // Signed EV relative to the meter
     let evFromMeter: Int
     let duration: Double         // seconds
     let iso: Float
@@ -93,13 +94,21 @@ struct BracketPlan {
 
     var allAtBaseISO: Bool { frames.allSatisfy { $0.iso <= limits.minISO } }
     /// The brightest (last) frame couldn't reach its target — deep shadows
-    /// may stay underexposed. (+4 on the tripod ladder, +3 handheld.)
-    var plusFourUnderexposed: Bool {
+    /// may stay underexposed. (+2 on the tripod ladder, +3 handheld.)
+    var brightestUnderexposed: Bool {
         frames.last?.isUnderexposed ?? false
     }
 }
 
 enum BracketPlanner {
+
+    /// Saved camera stacks are in capture order. Five-frame tripod stacks
+    /// still have 0 EV at index 3, just like older six-frame tripod stacks.
+    /// Handheld four-frame stacks have 0 EV at index 2.
+    static func representativeIndex(frameCount: Int) -> Int {
+        guard frameCount > 0 else { return 0 }
+        return frameCount == 5 || frameCount == 6 ? 3 : frameCount / 2
+    }
 
     /// Lowest-noise solution for a target exposure product P (seconds x ISO):
     /// stretch the shutter as long as the cap allows first, then raise ISO only

@@ -40,6 +40,11 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      - name: Check bracket exposure ladders
+        run: |
+          swiftc -parse-as-library Sources/BracketPlanner.swift Tests/BracketPlannerChecks.swift -o "$RUNNER_TEMP/bracket-planner-checks"
+          "$RUNNER_TEMP/bracket-planner-checks"
+
       - name: Check shutter preparation timing
         run: |
           swiftc -parse-as-library Sources/CapturePreparation.swift Tests/CapturePreparationChecks.swift -o "$RUNNER_TEMP/capture-preparation-checks"

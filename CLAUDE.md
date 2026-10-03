@@ -1,9 +1,10 @@
-# Photo Dash (née BracketCam) — 6-Frame HDR Bracket Camera for Real Estate
+# Photo Dash (née BracketCam) — HDR Bracket Camera for Real Estate
 
 Native iOS app (SwiftUI + AVFoundation, iOS 17+, iPhone, physical device only).
-One tap captures a fixed 6-shot exposure bracket on a tripod, optimized for
-lowest noise, for AI-based HDR merge/editing downstream. Output is JPEG, saved
-to Photos in one album per set.
+One tap captures five tripod exposures or four handheld exposures for AI-based
+HDR merge/editing downstream. New stacks stay in app-private storage. Legacy
+Photos albums remain readable. Tripod dropped only +4 EV in October 2026 to
+fit the five-image Ideogram/Hybrid limit; existing saved stacks remain intact.
 
 **Current connection (2026-09):** PhotoDash 2.1 connects selected JPEG stacks to the PhotoDash website, with Google browser sign-in, home selection/creation, private uploads, and Esoft processing. The current release is restricted to the server's pilot account and Esoft development credentials. There is no checkout in this build. StagerAI remains a website-only superuser backup. See PHOTODASH-CONNECTION.md for the workflow, authentication, retry behavior, and physical-device test checklist.
 
@@ -26,9 +27,9 @@ Built for a Windows user: GitHub Actions compiles iOS builds. The existing TestF
 | `project.yml` | XcodeGen spec — all Info.plist keys live here |
 | `.github/workflows/build-ipa.yml` | CI build producing the unsigned .ipa |
 
-## The exposure ladder (fixed, 6 frames)
+## The exposure ladder (fixed, 5 tripod frames)
 
-`Tuning.ladderEVs = [-6, -4, -2, 0, +2, +4]`, all relative to the scene meter,
+`Tuning.ladderEVs = [-6, -4, -2, 0, +2]`, all relative to the scene meter,
 captured darkest → brightest. There is no metered highlight-protection frame
 (v1 had one): field experience showed a fixed −6 EV floor protects window
 highlights in any realistic interior, with zero moving parts. The histogram
@@ -55,7 +56,7 @@ For a target product `P`:
 
 Cap = `min(1.0 s, format effective max)`. Bright scenes run the whole bracket
 at base ISO (green **BASE ISO** badge). If even maxISO at the cap can't reach
-the +4 frame, the orange **VERY DARK** badge shows.
+the +2 frame, the orange **VERY DARK** badge shows.
 
 ## Long exposures — the three traps (hard-won on a real iPhone 12)
 
@@ -118,7 +119,7 @@ works on all three axes:
 
 Trade-offs vs RAW long exposure: (1) per-shot ISO is ~stackCount× higher, so
 extremely dark rooms are cleaner in RAW mode (VERY DARK badge flags when the
-+4 frame can't reach target). (2) Residual softness, if any, then comes from
++2 frame can't reach target). (2) Residual softness, if any, then comes from
 per-frame high-ISO noise reduction smearing detail *before* averaging — RAW
 long exposure at low ISO is the crisp fallback for those scenes. Stack shots
 use `.speed` (capture speed matters; alignment+averaging supply the quality).
@@ -131,7 +132,7 @@ Compute: the align+resample pass adds a second or two per stacked frame.
 via `AVCapturePhotoSettings(rawPixelFormatType:)` — works on non-Pro iPhone 12.
 RAW skips the ISP entirely, so processing banding cannot exist and gradients
 are 12-bit. An embedded JPEG thumbnail is included for previews. Saved DNGs
-get real filenames (`Bracket_..._1of6.dng`). The user converts DNG → JPG in
+get real filenames (`Bracket_..._1of5.dng`). The user converts DNG → JPG in
 Lightroom (best) or via iCloud "Most Compatible" export — their AI editors
 (Esoft, autohdr.com) only accept JPG. Caveats: `videoZoomFactor` does NOT
 crop RAW output (pinch zoom is preview-only in RAW mode); ~25 MB per frame;
@@ -170,12 +171,11 @@ hardware limits. Pinch = digital zoom (crop, applies to saved photos), yellow
    (`AVCaptureEventInteraction`) — both avoid tripod shake.
 2. Wait for AF/AE/AWB convergence, read meter product E.
 3. Lock focus + white balance.
-4. For each of the 6 frames (darkest first): pin frame duration, commit custom
+4. For each of the 5 tripod frames (darkest first): pin frame duration, commit custom
    exposure (completion + 0.35 s settle), capture one JPEG (flash off, max
    photo dimensions). A dim overlay covers the frozen preview.
 5. Restore continuous AE/AWB/AF and normal frame rates.
-6. Save all 6 JPEGs in one Photos transaction: album `Bracket yyyy-MM-dd
-   HH.mm.ss` inside the top-level **RE Brackets** folder.
+6. Save the complete stack atomically in private app storage.
 
 ## Handheld mode (TRIPOD/HAND pill, 2026-08)
 
@@ -189,8 +189,8 @@ window insurance, +3 not +4 because the shutter floor ISO-clamps the
 brightest frame anyway. Whole bracket fires in ~3-4 s. ISO does the work
 in the bright frames; shadow noise accepted. Field status (2026-08-09):
 single-frame handheld sets align well at autohdr.com, slightly less well
-at Esoft. The library thumbnail picks `assets.count / 2` (0 EV in both
-ladders). Tripod keeps the 6-frame 2-stop ladder — proven with Esoft.
+at Esoft. The library thumbnail uses 0 EV: index 2 for handheld, index 3 for
+five-frame tripod and legacy six-frame tripod stacks.
 
 **FIELD-TEST POSTMORTEM (2026-08-08), do not re-attempt without new
 evidence:** v1 of HAND mode stacked 12×1/60 s bursts per bright frame
@@ -240,6 +240,6 @@ frames that aren't plain single exposures poison third-party HDR merges.
   place without overflowing); long badges swap to short landscape variants.
   `RotationCoordinator`'s horizon-level capture angle still orients landscape
   shots correctly.
-- A dark-scene bracket takes a while: the +2/+4 frames can each run 1 s
+- A dark-scene bracket takes a while: the +2 frame can run a 1 s
   exposures plus pipeline settle — tens of seconds total is normal.
 - Free-Apple-ID sideloading expires every 7 days (re-run Sideloadly).

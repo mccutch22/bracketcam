@@ -126,7 +126,7 @@ struct ContentView: View {
                     if plan.allAtBaseISO {
                         badge("BASE ISO \(Int(plan.limits.minISO))", color: .green)
                     }
-                    if plan.plusFourUnderexposed {
+                    if plan.brightestUnderexposed {
                         // The full explanation doesn't fit rotated in landscape.
                         badge(orientation.isLandscape
                                 ? "VERY DARK"
@@ -291,7 +291,7 @@ struct ContentView: View {
         case .capturing(let step): return step
         case .saving: return "Saving in PhotoDash…"
         case .ready:
-            let frameCount = camera.plan?.frames.count ?? 6
+            let frameCount = camera.plan?.frames.count ?? (camera.handheldEnabled ? Tuning.handheldLadderEVs.count : Tuning.ladderEVs.count)
             return camera.focusLocked
                 ? "Tap shutter to fire the \(frameCount)-frame bracket"
                 : (camera.handheldEnabled

@@ -3,7 +3,7 @@ import Photos
 import ImageIO
 
 /// New stacks live privately in the app; legacy Photos albums remain readable.
-/// The stack is represented by its 0 EV frame (the middle of the ladder).
+/// The stack is represented by its 0 EV frame.
 struct StackItem: Identifiable {
     let id: String                 // album localIdentifier
     let title: String
@@ -29,7 +29,7 @@ final class LibraryModel: ObservableObject {
             items = stored.map { stack in
                 let files = BracketStore.shared.files(for: stack)
                 return StackItem(id: stack.id, title: stack.title, date: stack.date,
-                                 representative: nil, localRepresentative: files[files.count / 2], frameCount: files.count)
+                                 representative: nil, localRepresentative: files[BracketPlanner.representativeIndex(frameCount: files.count)], frameCount: files.count)
             }
         } catch { loadError = "Could not read saved stacks. Your files have not been removed. \(error.localizedDescription)" }
         let auth = PHPhotoLibrary.authorizationStatus(for: .readWrite)
@@ -54,11 +54,8 @@ final class LibraryModel: ObservableObject {
                 guard let album = child as? PHAssetCollection else { return }
                 let assets = PHAsset.fetchAssets(in: album, options: nil)
                 guard assets.count > 0 else { return }
-                // Album order is capture order (darkest first). The 0 EV
-                // frame sits at index 3 of the 6-frame tripod ladder
-                // (-6,-4,-2,0,+2,+4) and index 2 of the 4-frame handheld
-                // ladder (-6,-3,0,+3) — count/2 lands on it in both.
-                let rep = assets.object(at: min(assets.count / 2, assets.count - 1))
+                // Preserve normal-exposure thumbnails for current and legacy ladders.
+                let rep = assets.object(at: BracketPlanner.representativeIndex(frameCount: assets.count))
                 items.append(StackItem(id: album.localIdentifier,
                                        title: album.localizedTitle ?? "Bracket",
                                        date: rep.creationDate,
