@@ -6,6 +6,7 @@ final class SubmissionModel: ObservableObject {
     @Published var homes: [DashHome] = []
     @Published var chosenSlug = ""
     @Published var busy = false
+    @Published private(set) var uploading = false
     @Published var status = ""
     @Published var error: String?
     @Published var finished = false
@@ -50,9 +51,10 @@ final class SubmissionModel: ObservableObject {
     func submit(_ stacks: [StackItem]) async {
         guard !busy, let account, let home = chosenHome else { return }
         guard account.processingAvailable else { return }
-        busy = true; error = nil; finished = false
+        busy = true; uploading = true; error = nil; finished = false
+        status = "Preparing photo stacks…"
         UIApplication.shared.isIdleTimerDisabled = true
-        defer { busy = false; UIApplication.shared.isIdleTimerDisabled = false }
+        defer { busy = false; uploading = false; UIApplication.shared.isIdleTimerDisabled = false }
         do {
             var journal = try UploadJournal.load()
             for stack in stacks where !journal.contains(where: { $0.userID == account.user.id && $0.albumID == stack.id && $0.home.id == home.id }) {
@@ -120,6 +122,7 @@ struct PhotoDashSubmissionView: View {
 
     var body: some View {
         NavigationStack {
+            ScrollViewReader { scroll in
             Form {
                 if let account = model.account {
                     Section("Photo credits") {
@@ -138,11 +141,20 @@ struct PhotoDashSubmissionView: View {
                     }
                 }
                 if model.busy {
-                    if model.status.localizedCaseInsensitiveContains("stack") {
+                    if model.uploading {
                         Section {
-                            ProgressView(model.status).tint(.white).foregroundStyle(.white)
-                                .font(.headline).padding(.vertical, 10)
-                                .accessibilityLabel(model.status)
+                            VStack(alignment: .leading, spacing: 12) {
+                                ProgressView(model.status).tint(.white).font(.headline)
+                                Text("Keep PhotoDash open. Please don’t leave this screen until the upload finishes.")
+                                    .font(.subheadline)
+                            }
+                            .foregroundStyle(.white).padding(.vertical, 10)
+                            .id("upload-progress")
+                            .onAppear {
+                                withAnimation(.easeInOut(duration: 0.3)) {
+                                    scroll.scrollTo("upload-progress", anchor: .center)
+                                }
+                            }
                         }.listRowBackground(Color(red: 0.65, green: 0.06, blue: 0.06))
                     } else {
                         Section { ProgressView(model.status.isEmpty ? "Connecting…" : model.status) }
@@ -164,6 +176,12 @@ struct PhotoDashSubmissionView: View {
                 }
             }
             .task { await model.load() }
+            .task(id: model.uploading) {
+                guard model.uploading else { return }
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                guard !Task.isCancelled, model.uploading else { return }
+                withAnimation(.easeInOut(duration: 0.3)) { scroll.scrollTo("upload-progress", anchor: .center) }
+            }
             .interactiveDismissDisabled(model.busy)
             .sheet(isPresented: $showCredits) { PhotoDashCreditsView() }
             .fullScreenCover(item: $galleryHome, onDismiss: {
@@ -176,6 +194,7 @@ struct PhotoDashSubmissionView: View {
             }
             .onDisappear { addressSearch.cancel() }
             .onChange(of: model.account?.user.id) { _, _ in addressSearch.reset(); showNewHome = false }
+            }
         }
         .preferredColorScheme(.dark)
     }

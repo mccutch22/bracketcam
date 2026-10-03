@@ -2,6 +2,7 @@ import SwiftUI
 
 struct HomeAddressFields: View {
     @ObservedObject var search: AddressSearchModel
+    @StateObject private var location = NearbyAddressLocation()
 
     var body: some View {
         if search.manual {
@@ -17,6 +18,16 @@ struct HomeAddressFields: View {
                 .autocorrectionDisabled()
                 .submitLabel(.search)
                 .onSubmit { if !search.address.isComplete { search.updateQuery(search.query) } }
+            HStack {
+                Button(location.busy ? "Finding location…" : "Use my location") { location.request() }
+                    .disabled(location.busy)
+                if location.fix != nil {
+                    Button("Search anywhere") { location.clear(); search.setNearby(latitude: nil, longitude: nil) }
+                }
+            }
+            .font(.subheadline)
+            .onChange(of: location.fix) { _, fix in search.setNearby(latitude: fix?.latitude, longitude: fix?.longitude) }
+            if let message = location.message { Text(message).font(.caption).foregroundStyle(.secondary) }
             if search.loading { ProgressView("Finding address…") }
             if !search.suggestions.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {

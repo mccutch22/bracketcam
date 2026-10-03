@@ -44,6 +44,16 @@ final class AddressSearchModel: ObservableObject {
     private var sessionToken = UUID().uuidString
     private var revision = 0
     private var task: Task<Void, Never>?
+    private var nearby: (latitude: Double, longitude: Double, at: Date)?
+    private var resolvingPlace = false
+
+    func setNearby(latitude: Double?, longitude: Double?) {
+        if let latitude, let longitude, latitude.isFinite, longitude.isFinite,
+           abs(latitude) <= 90, abs(longitude) <= 180 {
+            nearby = ((latitude * 100).rounded() / 100, (longitude * 100).rounded() / 100, Date())
+        } else { nearby = nil }
+        if !manual && !address.canCreate && !resolvingPlace { updateQuery(query) }
+    }
 
     init(debounce: UInt64 = 300_000_000, lookup: @escaping Lookup) {
         self.debounce = debounce
@@ -56,6 +66,7 @@ final class AddressSearchModel: ObservableObject {
         task = nil
         loading = false
         suggestions = []
+        resolvingPlace = false
     }
 
     func updateQuery(_ value: String) {
@@ -72,7 +83,12 @@ final class AddressSearchModel: ObservableObject {
             guard let self else { return }
             do {
                 try await Task.sleep(nanoseconds: debounce)
-                let reply = try await lookup(["query": input, "sessionToken": token])
+                var fields = ["query": input, "sessionToken": token]
+                if let nearby, Date().timeIntervalSince(nearby.at) < 600 {
+                    fields["latitude"] = String(nearby.latitude)
+                    fields["longitude"] = String(nearby.longitude)
+                }
+                let reply = try await lookup(fields)
                 guard !Task.isCancelled, revision == version else { return }
                 suggestions = reply.suggestions ?? []
                 message = reply.configured == false ? "Address search is unavailable. You can enter the address manually." : suggestions.isEmpty ? "No matches. Try adding the city or enter the address manually." : nil
@@ -88,6 +104,7 @@ final class AddressSearchModel: ObservableObject {
         cancel()
         address = HomeAddress()
         query = suggestion.text
+        resolvingPlace = true
         message = nil
         loading = true
         let version = revision
@@ -110,7 +127,7 @@ final class AddressSearchModel: ObservableObject {
                 guard !Task.isCancelled, revision == version else { return }
                 message = "Couldn't load that address. Select it again or enter it manually."
             }
-            if revision == version { loading = false }
+            if revision == version { loading = false; resolvingPlace = false }
         }
     }
 

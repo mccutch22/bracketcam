@@ -29,6 +29,21 @@ import Foundation
         precondition(!model.address.isComplete)
         await model.waitForSearch()
         precondition(calls[2]["sessionToken"] != calls[0]["sessionToken"])
+        model.setNearby(latitude: 39.96123, longitude: -82.99888)
+        await model.waitForSearch()
+        precondition(calls.last?["latitude"] == "39.96" && calls.last?["longitude"] == "-83.0")
+        model.select(model.suggestions[0])
+        await model.waitForSearch()
+        precondition(calls.last?["latitude"] == nil)
+        let count = calls.count
+        model.setNearby(latitude: 40, longitude: -83)
+        await model.waitForSearch()
+        precondition(calls.count == count && model.address == complete)
+        model.updateQuery("789 Main")
+        await model.waitForSearch()
+        model.setNearby(latitude: nil, longitude: nil)
+        await model.waitForSearch()
+        precondition(calls.last?["latitude"] == nil && calls.last?["longitude"] == nil)
 
         var pending: CheckedContinuation<AddressSearchReply, Error>?
         let delayed = AddressSearchModel(debounce: 0) { _ in
